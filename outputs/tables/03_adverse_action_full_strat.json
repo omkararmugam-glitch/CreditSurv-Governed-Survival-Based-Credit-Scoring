@@ -1,0 +1,51 @@
+{
+  "applicant_id": "APP-000075",
+  "decision": "declined",
+  "notice_date": "2026-09-22",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.7313193312536264,
+  "horizon_months": 36,
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "reason": "Number of accounts opened recently",
+      "attribution": -0.1176,
+      "feature_value": 14.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "mths_since_recent_inq",
+      "reason": "Recency of inquiries on credit bureau report",
+      "attribution": -0.043729,
+      "feature_value": 0.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "bc_util",
+      "reason": "Proportion of available bankcard credit currently in use",
+      "attribution": -0.023679,
+      "feature_value": 12.100000381469727,
+      "direction_consistent": false
+    },
+    {
+      "rank": 4,
+      "feature": "home_ownership",
+      "reason": "Type of residence",
+      "attribution": -0.018204,
+      "feature_value": "RENT",
+      "direction_consistent": true
+    }
+  ],
+  "excluded_helpful_features": [
+    "percent_bc_gt_75",
+    "installment",
+    "pct_tl_nvr_dlq",
+    "dti",
+    "mo_sin_rcnt_rev_tl_op"
+  ],
+  "fair_lending_flags": []
+}

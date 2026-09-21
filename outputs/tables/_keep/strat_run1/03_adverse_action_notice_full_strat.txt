@@ -1,0 +1,70 @@
+==========================================================================
+                       STATEMENT OF ADVERSE ACTION                        
+==========================================================================
+
+Date:          2026-09-22
+Applicant ID:  APP-000075
+
+Example Lending Co.
+123 Example Street
+Springfield, IL 62701
+
+--------------------------------------------------------------------------
+ACTION TAKEN
+--------------------------------------------------------------------------
+We regret to inform you that we have declined your
+application for credit.
+
+--------------------------------------------------------------------------
+PRINCIPAL REASONS FOR OUR DECISION
+--------------------------------------------------------------------------
+The principal reason(s) for this decision were:
+
+1. Number of accounts opened recently
+   You have opened several new accounts in the last two years.
+
+2. Recency of inquiries on credit bureau report
+   You have applied for credit recently.
+
+3. Proportion of available bankcard credit currently in use
+   You are using a high share of your available bankcard limits.
+
+4. Type of residence
+   Your housing status contributed to this decision.
+
+If you have questions about these reasons, you may contact us at
+the address above.
+
+--------------------------------------------------------------------------
+CREDIT SCORE INFORMATION
+--------------------------------------------------------------------------
+Our decision was based in whole or in part on information
+obtained in a report from a consumer reporting agency.
+
+Your credit score:  692
+Possible range:     300 to 850
+Score source:       Credit bureau risk score
+Date of score:      2026-09-22
+
+You have a right to obtain a free copy of your consumer report
+from the reporting agency and to dispute the accuracy or
+completeness of any information in that report.
+
+--------------------------------------------------------------------------
+YOUR RIGHTS UNDER FEDERAL LAW
+--------------------------------------------------------------------------
+The federal Equal Credit Opportunity Act prohibits creditors from
+discriminating against credit applicants on the basis of race, color,
+religion, national origin, sex, marital status, age (provided the
+applicant has the capacity to enter into a binding contract); because all
+or part of the applicant's income derives from any public assistance
+program; or because the applicant has in good faith exercised any right
+under the Consumer Credit Protection Act.
+
+The federal agency that administers compliance with this law
+concerning this creditor is:
+  Consumer Financial Protection Bureau
+  1700 G Street NW
+  Washington, DC 20552
+
+==========================================================================

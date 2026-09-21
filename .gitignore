@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environment
+.venv/
+
+# Editor settings
+.vscode/
+
+# Raw and processed data: ~4.3 GB (the two Kaggle CSVs plus derived Parquet).
+# Re-derivable from the Kaggle download via scripts/00_ingest.py and 01_build_labels.py.
+outputs/data/
+
+# Fitted models: ~57 MB of pickled binaries, rebuildable from data + code, and
+# pickles are not reliably loadable across library versions. Their SHA-256 hashes
+# are recorded in the provenance stamp of every result that used them, so a
+# replaced model is still detectable.
+outputs/models/
+
+# NOTE: outputs/tables/ and outputs/figures/ are deliberately NOT ignored. They are
+# the evidence this project produced and are version-controlled, including their
+# CSV / Parquet / .npy files. Do not add global *.csv or *.parquet rules here.

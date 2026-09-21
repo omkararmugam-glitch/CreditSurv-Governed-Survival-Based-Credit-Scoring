@@ -1,0 +1,5 @@
+feature,comparability,n_accepted,n_rejected,accepted_mean,rejected_mean,smd,rank_auc,ks,ks_pvalue,primary_metric,verdict
+loan_amnt,good,2257790,1000000,15054.274,13147.01,0.1537,0.6081,0.2287,0.000e+00,smd,notable
+dti,partial,2256079,1000000,18.668,27.573,-0.4343,0.4562,0.2331,0.000e+00,rank_auc,negligible
+score,partial,2257790,330711,698.605,628.506,1.0355,0.8222,0.6543,0.000e+00,rank_auc,substantial
+emp_length_years,good,2110929,965547,5.979,1.146,1.6768,0.8993,0.7712,0.000e+00,smd,substantial

@@ -1,0 +1,60 @@
+# creditsurv pipeline configuration
+#
+# Fill in the two csv paths below, then run scripts/00_ingest.py.
+# Everything else has a working default.
+
+paths:
+  # >>> SET THESE TO YOUR DOWNLOADED KAGGLE FILES <<<
+  accepted_csv: outputs/data/accepted_2007_to_2018Q4.csv
+  rejected_csv: outputs/data/rejected_2007_to_2018Q4.csv
+
+  data_dir: outputs/data
+  models_dir: outputs/models
+  figures_dir: outputs/figures
+  tables_dir: outputs/tables
+
+ingest:
+  chunksize: 250000
+  extended_features: true
+  row_limit: null       # set e.g. 50000 to smoke-test ingest on the real file
+
+sample:
+  dev_sample_size: 200000
+  stratify_by: [issue_year, term_months]
+  seed: 20260921
+
+# Survival-label construction. These defaults ARE the primary specification
+# documented in FINDINGS.md. Changing them changes every downstream result.
+label:
+  late_31_120_is_event: false       # sensitivity variant: true
+  include_policy_exceptions: false  # 2007-08 loans under a different regime
+  min_duration_months: 1
+  term_overrun_grace_months: 12
+  event_lag_months: 0               # sensitivity variant: 5 (LC charge-off lag)
+  data_cutoff: null                 # null => inferred from the data
+
+model:
+  with_lc_grade: false              # primary excludes LC grade / sub_grade / int_rate
+  test_size: 0.2
+  time_bin_months: 1                # use 3 for the full-data run
+  eval_horizons_months: [6, 12, 18, 24, 30, 36]
+  seed: 20260921
+
+explain:
+  n_explain: 1000
+  n_background: 100
+  kernel_nsamples: 600   # measured stability floor for 73 features; see
+                         # outputs/tables/03_nsamples_study.csv
+  segment_by: [grade, purpose, income_band]
+  seed: 20260921
+
+# Pre-registered Stage 4 gate thresholds. Fixed before looking at any result.
+diagnostic:
+  rejected_sample_size: 1000000
+  smd_notable: 0.10
+  smd_substantial: 0.25
+  ks_substantial: 0.20
+  separability_auc_strong: 0.75
+  separability_auc_weak: 0.60
+  min_common_support: 0.05
+  seed: 20260921

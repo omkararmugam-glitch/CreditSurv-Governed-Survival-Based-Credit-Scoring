@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "creditsurv"
+version = "0.1.0"
+description = "Survival-based credit scoring with regulation-ready explainability and diagnostic-gated reject inference"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pyarrow>=14",
+    "scikit-learn>=1.4",
+    "lightgbm>=4.0",
+    "shap>=0.44",
+    "lifelines>=0.30",
+    "matplotlib>=3.8",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,49 @@
+{
+  "n_input": 2260668,
+  "n_retained": 2257892,
+  "data_cutoff": "2019-03-01",
+  "cutoff_source": "inferred",
+  "status_counts": {
+    "Fully Paid": 1076751,
+    "Current": 878317,
+    "Charged Off": 268559,
+    "Late (31-120 days)": 21467,
+    "In Grace Period": 8436,
+    "Late (16-30 days)": 4349,
+    "Does not meet the credit policy. Status:Fully Paid": 1988,
+    "Does not meet the credit policy. Status:Charged Off": 761,
+    "Default": 40
+  },
+  "outcome_counts": {
+    "censored_payoff": 1076751,
+    "censored_admin": 878317,
+    "event": 290066,
+    "censored_delinquent": 12785,
+    "excluded": 2749
+  },
+  "drop_counts": {
+    "excluded_status": 2749,
+    "term_overrun": 27
+  },
+  "n_never_paid": 2415,
+  "n_duration_floored": 8965,
+  "event_rate": 0.12846495757990195,
+  "duration_months_median": 17.0,
+  "duration_months_max": 70,
+  "config": {
+    "late_31_120_is_event": true,
+    "include_policy_exceptions": false,
+    "min_duration_months": 1,
+    "term_overrun_grace_months": 12,
+    "event_lag_months": 0
+  },
+  "dev_sample": {
+    "n": 200000,
+    "event_rate": 0.13033,
+    "stratify_by": [
+      "issue_year",
+      "term_months"
+    ],
+    "seed": 20260921
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "applicant_id": "APP-000225",
+  "decision": "declined",
+  "notice_date": "2026-09-21",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.5567124890402838,
+  "horizon_months": 36,
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "reason": "Number of accounts opened recently",
+      "attribution": -0.068386,
+      "feature_value": 9.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "dti",
+      "reason": "Excessive obligations in relation to income",
+      "attribution": -0.054818,
+      "feature_value": 31.65999984741211,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "annual_inc",
+      "reason": "Income insufficient for amount of credit requested",
+      "attribution": -0.017115,
+      "feature_value": 50000.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 4,
+      "feature": "verification_status",
+      "reason": "Unable to verify income",
+      "attribution": -0.016462,
+      "feature_value": "Verified",
+      "direction_consistent": true
+    }
+  ],
+  "excluded_helpful_features": [
+    "purpose",
+    "pct_tl_nvr_dlq",
+    "addr_state",
+    "total_il_high_credit_limit",
+    "mths_since_last_record"
+  ],
+  "fair_lending_flags": []
+}

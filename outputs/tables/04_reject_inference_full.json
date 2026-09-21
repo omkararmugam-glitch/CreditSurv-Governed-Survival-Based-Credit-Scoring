@@ -1,0 +1,340 @@
+{
+  "tag": "full",
+  "n_accepted": 2257790,
+  "n_rejected_sampled": 1000000,
+  "dti_clip": 100.0,
+  "diagnostic": {
+    "n_accepted": 2257790,
+    "n_rejected": 1000000,
+    "separability_auc": 0.8938,
+    "top_selection_drivers": [
+      "emp_length_years",
+      "score",
+      "dti"
+    ],
+    "common_support_share": 0.6706,
+    "substantial_features": [
+      "score",
+      "emp_length_years"
+    ],
+    "notable_features": [
+      "loan_amnt",
+      "score",
+      "emp_length_years"
+    ],
+    "bias_detected": true,
+    "support_adequate": true,
+    "gate_decision": "apply_correction",
+    "rationale": "Distortion present (separability AUC 0.894; substantial on ['score', 'emp_length_years']) AND common support is 67.1%, above the 5% floor. A reweighting correction is warranted and will be applied.",
+    "thresholds": {
+      "smd_notable": 0.1,
+      "smd_substantial": 0.25,
+      "ks_substantial": 0.2,
+      "rank_auc_notable": 0.55,
+      "rank_auc_substantial": 0.65,
+      "separability_auc_strong": 0.75,
+      "separability_auc_weak": 0.6,
+      "min_common_support": 0.05
+    },
+    "notes": [
+      "dti: graded 'partial' -- judged on rank AUC (0.456), not SMD (-0.434), because the accepted and rejected columns are different instruments and an SMD between them conflates scale with selection.",
+      "score: graded 'partial' -- judged on rank AUC (0.822), not SMD (1.036), because the accepted and rejected columns are different instruments and an SMD between them conflates scale with selection."
+    ],
+    "features": [
+      {
+        "feature": "loan_amnt",
+        "comparability": "good",
+        "n_accepted": 2257790,
+        "n_rejected": 1000000,
+        "accepted_mean": 15054.274,
+        "rejected_mean": 13147.01,
+        "smd": 0.1537,
+        "rank_auc": 0.6081,
+        "ks": 0.2287,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "smd",
+        "verdict": "notable"
+      },
+      {
+        "feature": "dti",
+        "comparability": "partial",
+        "n_accepted": 2256079,
+        "n_rejected": 1000000,
+        "accepted_mean": 18.668,
+        "rejected_mean": 27.573,
+        "smd": -0.4343,
+        "rank_auc": 0.4562,
+        "ks": 0.2331,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "rank_auc",
+        "verdict": "negligible"
+      },
+      {
+        "feature": "score",
+        "comparability": "partial",
+        "n_accepted": 2257790,
+        "n_rejected": 330711,
+        "accepted_mean": 698.605,
+        "rejected_mean": 628.506,
+        "smd": 1.0355,
+        "rank_auc": 0.8222,
+        "ks": 0.6543,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "rank_auc",
+        "verdict": "substantial"
+      },
+      {
+        "feature": "emp_length_years",
+        "comparability": "good",
+        "n_accepted": 2110929,
+        "n_rejected": 965547,
+        "accepted_mean": 5.979,
+        "rejected_mean": 1.146,
+        "smd": 1.6768,
+        "rank_auc": 0.8993,
+        "ks": 0.7712,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "smd",
+        "verdict": "substantial"
+      }
+    ]
+  },
+  "correction_applied": true,
+  "correction_forced": false,
+  "weights": {
+    "features_used": [
+      "loan_amnt",
+      "dti",
+      "score",
+      "emp_length_years"
+    ],
+    "unavailable_features": [
+      "annual_inc",
+      "revol_util",
+      "home_ownership",
+      "credit history depth"
+    ],
+    "propensity_auc": 0.8938,
+    "weight_mean": 1.0,
+    "weight_min": 0.5739,
+    "weight_max": 3.4592,
+    "weight_p99": 3.4592,
+    "clip_quantiles": [
+      0.01,
+      0.99
+    ],
+    "clip_bounds": [
+      1.0024,
+      6.0415
+    ],
+    "n_clipped": 45156,
+    "nominal_n": 2257790,
+    "effective_n": 1589230.5,
+    "ess_ratio": 0.7039,
+    "caveat": "Corrects selection only on the features listed in features_used. Selection operating through annual_inc, revol_util, home_ownership, credit history depth is not addressed and is invisible to this correction."
+  },
+  "metrics_before_after": {
+    "before": {
+      "model": "discrete_hazard_before",
+      "split": "test",
+      "n": 451558,
+      "event_rate": 0.1183,
+      "concordance": 0.6944,
+      "ibs": 0.0997,
+      "auc_6m": 0.7203,
+      "auc_12m": 0.7092,
+      "auc_18m": 0.6984,
+      "auc_24m": 0.6914,
+      "auc_30m": 0.6859,
+      "auc_36m": 0.6453,
+      "unreliable_horizons": []
+    },
+    "after": {
+      "model": "discrete_hazard_after",
+      "split": "test",
+      "n": 451558,
+      "event_rate": 0.1183,
+      "concordance": 0.6916,
+      "ibs": 0.0999,
+      "auc_6m": 0.717,
+      "auc_12m": 0.7056,
+      "auc_18m": 0.6952,
+      "auc_24m": 0.6886,
+      "auc_30m": 0.6836,
+      "auc_36m": 0.6466,
+      "unreliable_horizons": []
+    }
+  },
+  "explanation_shift": {
+    "status": "measured",
+    "rank_correlation": 0.9709,
+    "top5_overlap": 1.0,
+    "top5_before": [
+      "acc_open_past_24mths",
+      "annual_inc",
+      "dti",
+      "installment",
+      "loan_amnt"
+    ],
+    "top5_after": [
+      "acc_open_past_24mths",
+      "annual_inc",
+      "dti",
+      "installment",
+      "loan_amnt"
+    ],
+    "verdict": "IMPORTANCE IS STABLE under correction",
+    "table": [
+      {
+        "feature": "installment",
+        "importance_before": 0.03645296144602085,
+        "importance_after": 0.04550854263741596,
+        "rank_before": 1.0,
+        "rank_after": 1.0,
+        "abs_change": 0.009055581191395108,
+        "pct_change": 24.84182582752437,
+        "rank_change": 0.0
+      },
+      {
+        "feature": "acc_open_past_24mths",
+        "importance_before": 0.02487467403242254,
+        "importance_after": 0.02575992469843785,
+        "rank_before": 2.0,
+        "rank_after": 2.0,
+        "abs_change": 0.0008852506660153095,
+        "pct_change": 3.5588432831780716,
+        "rank_change": 0.0
+      },
+      {
+        "feature": "annual_inc",
+        "importance_before": 0.01812800752626107,
+        "importance_after": 0.02043200073533491,
+        "rank_before": 3.0,
+        "rank_after": 4.0,
+        "abs_change": 0.002303993209073839,
+        "pct_change": 12.709577738955414,
+        "rank_change": 1.0
+      },
+      {
+        "feature": "dti",
+        "importance_before": 0.0135120292243072,
+        "importance_after": 0.014344498525895094,
+        "rank_before": 4.0,
+        "rank_after": 5.0,
+        "abs_change": 0.0008324693015878942,
+        "pct_change": 6.160949534436618,
+        "rank_change": 1.0
+      },
+      {
+        "feature": "loan_amnt",
+        "importance_before": 0.013282964136418544,
+        "importance_after": 0.023388463187953134,
+        "rank_before": 5.0,
+        "rank_after": 3.0,
+        "abs_change": 0.01010549905153459,
+        "pct_change": 76.0786444030806,
+        "rank_change": -2.0
+      },
+      {
+        "feature": "tot_hi_cred_lim",
+        "importance_before": 0.011966025551534462,
+        "importance_after": 0.012288944313213958,
+        "rank_before": 6.0,
+        "rank_after": 6.0,
+        "abs_change": 0.0003229187616794957,
+        "pct_change": 2.6986300529676392,
+        "rank_change": 0.0
+      },
+      {
+        "feature": "percent_bc_gt_75",
+        "importance_before": 0.01049598650753334,
+        "importance_after": 0.011033729014299205,
+        "rank_before": 7.0,
+        "rank_after": 8.0,
+        "abs_change": 0.0005377425067658644,
+        "pct_change": 5.1233155299876545,
+        "rank_change": 1.0
+      },
+      {
+        "feature": "addr_state",
+        "importance_before": 0.010194961703712315,
+        "importance_after": 0.010814864327044482,
+        "rank_before": 8.0,
+        "rank_after": 9.0,
+        "abs_change": 0.0006199026233321674,
+        "pct_change": 6.080480156256407,
+        "rank_change": 1.0
+      },
+      {
+        "feature": "mths_since_last_record",
+        "importance_before": 0.00986119891820175,
+        "importance_after": 0.010227538155857814,
+        "rank_before": 9.0,
+        "rank_after": 11.0,
+        "abs_change": 0.0003663392376560635,
+        "pct_change": 3.7149563728998145,
+        "rank_change": 2.0
+      },
+      {
+        "feature": "home_ownership",
+        "importance_before": 0.009657641331773745,
+        "importance_after": 0.010440906851687567,
+        "rank_before": 10.0,
+        "rank_after": 10.0,
+        "abs_change": 0.0007832655199138221,
+        "pct_change": 8.110319000322262,
+        "rank_change": 0.0
+      },
+      {
+        "feature": "mths_since_recent_inq",
+        "importance_before": 0.009296000028599491,
+        "importance_after": 0.01155615746843566,
+        "rank_before": 11.0,
+        "rank_after": 7.0,
+        "abs_change": 0.002260157439836168,
+        "pct_change": 24.31322539675892,
+        "rank_change": -4.0
+      },
+      {
+        "feature": "mo_sin_old_rev_tl_op",
+        "importance_before": 0.009117399786810892,
+        "importance_after": 0.008736713031401689,
+        "rank_before": 12.0,
+        "rank_after": 12.0,
+        "abs_change": 0.0003806867554092038,
+        "pct_change": -4.17538732874147,
+        "rank_change": 0.0
+      },
+      {
+        "feature": "num_tl_op_past_12m",
+        "importance_before": 0.009039877223788255,
+        "importance_after": 0.008200908016069932,
+        "rank_before": 13.0,
+        "rank_after": 14.0,
+        "abs_change": 0.0008389692077183236,
+        "pct_change": -9.280758874806319,
+        "rank_change": 1.0
+      },
+      {
+        "feature": "verification_status",
+        "importance_before": 0.007935400882394457,
+        "importance_after": 0.008659093443940072,
+        "rank_before": 14.0,
+        "rank_after": 13.0,
+        "abs_change": 0.0007236925615456153,
+        "pct_change": 9.119798385374649,
+        "rank_change": -1.0
+      },
+      {
+        "feature": "bc_open_to_buy",
+        "importance_before": 0.007708170977902777,
+        "importance_after": 0.007334095946361697,
+        "rank_before": 15.0,
+        "rank_after": 15.0,
+        "abs_change": 0.00037407503154108027,
+        "pct_change": -4.852967488830377,
+        "rank_change": 0.0
+      }
+    ]
+  }
+}
