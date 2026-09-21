@@ -40,6 +40,11 @@ from creditsurv.reject_inference.diagnostics import (  # noqa: E402
     parse_rejected_dti,
     run_selection_diagnostic,
 )
+from creditsurv.provenance import (  # noqa: E402
+    build_stamp,
+    find_existing_outputs,
+    guard_outputs,
+)
 from creditsurv.reporting import figures as figs  # noqa: E402
 from creditsurv.reporting.tables import (  # noqa: E402
     explanation_shift_table,
@@ -84,11 +89,33 @@ def main() -> int:
     ap.add_argument("--force-correction", action="store_true",
                     help="apply the correction even if the gate blocks it (recorded)")
     ap.add_argument("--dti-clip", type=float, default=100.0)
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing existing outputs for this --tag")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     cfg.paths.ensure_dirs()
     d = cfg.diagnostic
+
+    # Checked before either population is loaded, so a refused run costs nothing.
+    refused = guard_outputs(
+        find_existing_outputs([cfg.paths.tables_dir, cfg.paths.figures_dir],
+                              "04", args.tag),
+        args.overwrite, script="04_reject_inference.py")
+    if refused:
+        return refused
+
+    def stamp() -> dict:
+        # Built at write time. The model is only loaded on the correction path,
+        # but is recorded either way: if it is later replaced, a no-correction
+        # result would otherwise look unaffected when its sibling results are not.
+        return build_stamp(
+            stage="04_reject_inference",
+            inputs={"accepted": src, "rejected": cfg.paths.rejected_parquet,
+                    "model": cfg.paths.models_dir / f"02_models_{args.tag}.pkl"},
+            config_path=args.config,
+            args=vars(args),
+        )
 
     if not cfg.paths.rejected_parquet.exists():
         print(f"ERROR: {cfg.paths.rejected_parquet} not found. Run 00_ingest.py.",
@@ -182,6 +209,7 @@ def main() -> int:
             "status": "not_applicable",
             "reason": diag.rationale(),
         }
+        payload["provenance"] = stamp()
         out = cfg.paths.tables_dir / f"04_reject_inference_{args.tag}.json"
         write_json(payload, out)
         print(f"\nresults -> {out}")
@@ -291,6 +319,7 @@ def main() -> int:
         "verdict": verdict,
         "table": shift.to_dict(orient="records"),
     }
+    payload["provenance"] = stamp()
     out = cfg.paths.tables_dir / f"04_reject_inference_{args.tag}.json"
     write_json(payload, out)
     print(f"\nresults -> {out}")

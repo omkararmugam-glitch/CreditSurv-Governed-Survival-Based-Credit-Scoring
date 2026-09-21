@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from creditsurv.config import load_config  # noqa: E402
 from creditsurv.io.loaders import stratified_sample  # noqa: E402
+from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
 from creditsurv.labeling.survival_target import (  # noqa: E402
     LabelConfig,
     build_survival_target,
@@ -43,10 +44,29 @@ def main() -> int:
     ap.add_argument("--include-policy-exceptions", action="store_true")
     ap.add_argument("--tag", default=None,
                     help="suffix for output filenames, for sensitivity runs")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing existing outputs for this tag")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     cfg.paths.ensure_dirs()
+
+    # Checked before anything is loaded, so a refused run costs nothing.
+    tag = f"_{args.tag}" if args.tag else ""
+    labeled_path = cfg.paths.data_dir / f"accepted_labeled{tag}.parquet"
+    dev_path = cfg.paths.data_dir / f"dev_sample{tag}.parquet"
+    audit_path = cfg.paths.tables_dir / f"01_label_audit{tag}.json"
+    sensitivity = (args.late_as_event or args.include_policy_exceptions
+                   or args.event_lag is not None)
+    if sensitivity and not args.tag and not args.overwrite and labeled_path.exists():
+        print("NOTE: a sensitivity flag was given without --tag. Without a tag this "
+              "run would REPLACE the primary labelled dataset that every later stage "
+              "reads. Use --tag <name> to write the variant alongside it.",
+              file=sys.stderr)
+    refused = guard_outputs([labeled_path, dev_path, audit_path], args.overwrite,
+                            script="01_build_labels.py")
+    if refused:
+        return refused
 
     if not cfg.paths.accepted_parquet.exists():
         print(f"ERROR: {cfg.paths.accepted_parquet} not found. "
@@ -90,8 +110,6 @@ def main() -> int:
     for reason, count in sorted(audit["drop_counts"].items(), key=lambda kv: -kv[1]):
         print(f"    dropped {count:>9,}  {reason}")
 
-    tag = f"_{args.tag}" if args.tag else ""
-    labeled_path = cfg.paths.data_dir / f"accepted_labeled{tag}.parquet"
     labeled.to_parquet(labeled_path, index=False)
     print(f"wrote {labeled_path}")
 
@@ -101,7 +119,6 @@ def main() -> int:
         by=cfg.sample.stratify_by,
         seed=cfg.sample.seed,
     )
-    dev_path = cfg.paths.data_dir / f"dev_sample{tag}.parquet"
     dev.to_parquet(dev_path, index=False)
     print(f"wrote {dev_path} ({len(dev):,} rows, "
           f"event rate {dev['event'].mean():.4f})")
@@ -112,7 +129,13 @@ def main() -> int:
         "stratify_by": list(cfg.sample.stratify_by),
         "seed": cfg.sample.seed,
     }
-    audit_path = cfg.paths.tables_dir / f"01_label_audit{tag}.json"
+    audit["provenance"] = build_stamp(
+        stage="01_build_labels",
+        inputs={"accepted_raw": cfg.paths.accepted_parquet},
+        outputs={"labeled": labeled_path, "dev_sample": dev_path},
+        config_path=args.config,
+        args=vars(args),
+    )
     audit_path.write_text(json.dumps(audit, indent=2), encoding="utf-8")
     print(f"audit written to {audit_path}")
     return 0

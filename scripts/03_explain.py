@@ -34,6 +34,11 @@ from creditsurv.explain.naive_shap import explain_naive_shap  # noqa: E402
 from creditsurv.explain.segments import analyse_segment_stability  # noqa: E402
 from creditsurv.explain.survshap import check_efficiency, explain_survshap  # noqa: E402
 from creditsurv.features.build import add_derived_features, build_design_matrix  # noqa: E402
+from creditsurv.provenance import (  # noqa: E402
+    build_stamp,
+    find_existing_outputs,
+    guard_outputs,
+)
 from creditsurv.reporting import figures as figs  # noqa: E402
 from creditsurv.reporting.tables import to_markdown, write_json, write_table  # noqa: E402
 
@@ -66,12 +71,25 @@ def main() -> int:
                     help="skip the naive-SHAP comparison. Use when the comparison is "
                          "already settled from another run; halves the runtime, since "
                          "naive SHAP costs about as much as SurvSHAP(t) itself.")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing existing outputs for this --tag")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     cfg.paths.ensure_dirs()
 
     model_tag = args.model_tag or args.tag
+
+    # Checked before the model or data is loaded. This is the guard that would
+    # have prevented the earlier near-miss, where a variant run was launched with
+    # the tag of the settled comparison result.
+    refused = guard_outputs(
+        find_existing_outputs([cfg.paths.tables_dir, cfg.paths.figures_dir],
+                              "03", args.tag),
+        args.overwrite, script="03_explain.py")
+    if refused:
+        return refused
+
     model_path = cfg.paths.models_dir / f"02_models_{model_tag}.pkl"
     if not model_path.exists():
         print(f"ERROR: {model_path} not found. Run scripts/02_train_models.py first.",
@@ -308,6 +326,14 @@ def main() -> int:
         "adverse_action": notice.to_dict(),
         "segment_stability": seg_results,
     }
+    payload["provenance"] = build_stamp(
+        stage="03_explain",
+        inputs={"model": model_path, "data": src},
+        outputs={"per_borrower_importance": cfg.paths.tables_dir
+                 / f"03_per_borrower_importance_{args.tag}.parquet"},
+        config_path=args.config,
+        args=vars(args),
+    )
     out = cfg.paths.tables_dir / f"03_explain_{args.tag}.json"
     write_json(payload, out)
     print(f"\nresults -> {out}")

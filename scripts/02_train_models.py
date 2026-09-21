@@ -37,6 +37,11 @@ from creditsurv.models.discrete_hazard import (  # noqa: E402
     expansion_row_estimate,
 )
 from creditsurv.models.evaluate import CensoringModel, evaluate_survival  # noqa: E402
+from creditsurv.provenance import (  # noqa: E402
+    build_stamp,
+    find_existing_outputs,
+    guard_outputs,
+)
 from creditsurv.reporting import figures as figs  # noqa: E402
 from creditsurv.reporting.tables import (  # noqa: E402
     model_comparison_table,
@@ -67,6 +72,9 @@ def main() -> int:
     ap.add_argument("--skip-cox", action="store_true")
     ap.add_argument("--skip-gbm", action="store_true")
     ap.add_argument("--tag", default=None)
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing existing outputs for this tag, including "
+                         "the fitted model that later stages were computed from")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -74,6 +82,17 @@ def main() -> int:
     tag = args.tag or ("full" if args.full else "dev")
     if args.with_lc_grade:
         tag += "_lcgrade"
+
+    # Checked before any data is loaded, so a refused run costs nothing. Replacing
+    # 02_models_<tag>.pkl silently would leave every Stage 3/4 result describing a
+    # model that no longer exists.
+    refused = guard_outputs(
+        find_existing_outputs(
+            [cfg.paths.tables_dir, cfg.paths.figures_dir, cfg.paths.models_dir],
+            "02", tag),
+        args.overwrite, script="02_train_models.py")
+    if refused:
+        return refused
 
     src = cfg.paths.labeled_parquet if args.full else cfg.paths.dev_sample_parquet
     if not src.exists():
@@ -265,12 +284,21 @@ def main() -> int:
         },
         "results": [r.summary() for r in results],
     }
-    write_json(payload, cfg.paths.tables_dir / f"02_metrics_{tag}.json")
 
+    # Model first, so the metrics can record the hash of the exact model they
+    # describe; Stage 3/4 stamps record the same hash for the model they loaded.
     model_path = cfg.paths.models_dir / f"02_models_{tag}.pkl"
     with open(model_path, "wb") as fh:
         pickle.dump({"artefacts": artefacts, "spec": spec,
                      "train_idx": train_idx, "test_idx": test_idx}, fh)
+    payload["provenance"] = build_stamp(
+        stage="02_train_models",
+        inputs={"data": src},
+        outputs={"model": model_path},
+        config_path=args.config,
+        args=vars(args),
+    )
+    write_json(payload, cfg.paths.tables_dir / f"02_metrics_{tag}.json")
     print(f"\nmodels -> {model_path}")
     print(f"metrics -> {cfg.paths.tables_dir / f'02_metrics_{tag}.json'}")
     return 0

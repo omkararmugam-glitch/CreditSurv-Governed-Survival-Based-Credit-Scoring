@@ -21,7 +21,7 @@ instead of one number.
 ## Status
 
 All five stages are built and have been run on the full dataset (2,257,790
-loans). 265 tests pass with no real data required. Results are in
+loans). 300 tests pass with no real data required. Results are in
 [FINDINGS.md](FINDINGS.md).
 
 | Stage | Full-data run |
@@ -95,6 +95,34 @@ on Kaggle (~1.1 GB zipped, ~3.3 GB as two CSVs).
 ./.venv/Scripts/python.exe -m pytest -q
 ```
 
+## Re-running stages safely
+
+Stages 1–4 (and `03b`) **refuse to overwrite existing results**. If any output
+for the chosen `--tag` already exists, the script lists it and exits with code 4
+before loading any data. To replace results deliberately, pass `--overwrite`;
+to keep both, use a different `--tag`. This matters most for files that are not
+in git — the fitted models in `outputs/models/` and the data in `outputs/data/` —
+which cannot be recovered once replaced. Note in particular that a Stage 1
+sensitivity flag without `--tag` would otherwise replace the primary dataset.
+
+Every results JSON carries a `provenance` block: the git commit (and whether the
+code was modified at run time), SHA-256 hashes of every input file and of any
+model written, the config, and library versions. To check that no result's
+inputs have been replaced since it was produced:
+
+```bash
+./.venv/Scripts/python.exe scripts/check_provenance.py     # exit 1 on any change
+```
+
+Results produced before stamping was added are covered by
+`outputs/provenance_baseline.json`, a recorded hash of every untracked model and
+data file.
+
+`scripts/05_report.py` regenerates FINDINGS.md §2–§5 but refuses to overwrite a
+section that was edited by hand since it last wrote it. Hand-written text inside
+those sections belongs in a `<!-- keep:NAME --> … <!-- /keep:NAME -->` block,
+which survives regeneration.
+
 ## Layout
 
 ```
@@ -116,9 +144,9 @@ src/creditsurv/
   reject_inference/  diagnostics.py  pre-registered selection-bias gate
                      correction.py   inverse-propensity reweighting
   reporting/  tables.py  figures.py
-scripts/      00..05 one per stage, plus inspect_data.py
-tests/        264 tests, synthetic fixtures only — no real data required
-outputs/      data/ (gitignored)  models/  figures/  tables/
+scripts/      00..05 one per stage, plus 03b bootstrap, inspect_data.py, check_provenance.py
+tests/        300 tests, synthetic fixtures only — no real data required
+outputs/      data/ models/ (gitignored)   figures/ tables/ (in git: the evidence)
 ```
 
 ## Two things worth knowing before reading results

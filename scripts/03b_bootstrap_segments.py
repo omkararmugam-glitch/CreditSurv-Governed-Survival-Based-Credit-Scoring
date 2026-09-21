@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from creditsurv.config import load_config  # noqa: E402
 from creditsurv.explain.segments import bootstrap_segment_ranks  # noqa: E402
+from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
 from creditsurv.reporting.tables import to_markdown, write_json  # noqa: E402
 
 # Which (target grade, features) to test. These are the features whose rank in F or
@@ -39,9 +40,16 @@ def main() -> int:
     ap.add_argument("--tag", default="full_strat")
     ap.add_argument("--n-boot", type=int, default=5000)
     ap.add_argument("--segment", default="grade")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="allow replacing an existing bootstrap result for this --tag")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
+    out_path = cfg.paths.tables_dir / f"03_segment_bootstrap_{args.tag}.json"
+    refused = guard_outputs([out_path], args.overwrite,
+                            script="03b_bootstrap_segments.py")
+    if refused:
+        return refused
     path = cfg.paths.tables_dir / f"03_per_borrower_importance_{args.tag}.parquet"
     if not path.exists():
         print(f"ERROR: {path} not found. Re-run 03_explain.py; per-borrower "
@@ -75,8 +83,11 @@ def main() -> int:
         results[target] = out.to_dict(orient="records")
 
     write_json({"tag": args.tag, "n_boot": args.n_boot, "reference": REFERENCE,
-                "results": results},
-               cfg.paths.tables_dir / f"03_segment_bootstrap_{args.tag}.json")
+                "results": results,
+                "provenance": build_stamp(stage="03b_bootstrap_segments",
+                                          inputs={"per_borrower_importance": path},
+                                          config_path=args.config, args=vars(args))},
+               out_path)
     print(f"\nwrote 03_segment_bootstrap_{args.tag}.json")
     return 0
 
