@@ -21,6 +21,10 @@ __all__ = [
     "plot_segment_heatmap",
     "plot_propensity_overlap",
     "plot_calibration",
+    "plot_missing_share",
+    "plot_numeric_distributions",
+    "plot_correlation_heatmap",
+    "plot_default_rate_bars",
 ]
 
 # Okabe-Ito: distinguishable under the common forms of colour vision deficiency.
@@ -268,4 +272,99 @@ def plot_calibration(
     ax.set_title("Calibration by predicted decile")
     ax.set_aspect("equal")
     ax.legend(frameon=False, fontsize=9)
+    return _save(fig, path)
+
+
+# ---------------------------------------------------------------------------
+# EDA charts (scripts/01b_eda.py and the dashboard's Data Profile tab). These
+# describe data; none of them is produced from a model.
+# ---------------------------------------------------------------------------
+
+
+def plot_missing_share(missing: pd.DataFrame, path: str | Path, *, top: int = 30) -> Path:
+    """Share of rows missing, worst columns first."""
+    plt = _setup()
+    data = missing[missing["missing_share"] > 0].head(top).iloc[::-1]
+    if data.empty:
+        fig, ax = plt.subplots(figsize=(6, 1.6))
+        ax.text(0.5, 0.5, "No missing values in any column", ha="center", va="center")
+        ax.axis("off")
+        return _save(fig, path)
+    fig, ax = plt.subplots(figsize=(7, max(2.5, 0.26 * len(data))))
+    ax.barh(data["column"], data["missing_share"] * 100, color=PALETTE[0])
+    ax.set_xlabel("% of rows missing")
+    ax.set_title(f"Missing values (top {len(data)} of "
+                 f"{int((missing['missing_share'] > 0).sum())} affected columns)")
+    return _save(fig, path)
+
+
+def plot_numeric_distributions(df: pd.DataFrame, columns, path: str | Path, *,
+                               bins: int = 40) -> Path:
+    """Histograms on a shared grid, each clipped at its own 0.5/99.5 percentiles so
+    one extreme value cannot flatten the whole distribution."""
+    plt = _setup()
+    cols = [c for c in columns if c in df.columns][:12]
+    if not cols:
+        fig, ax = plt.subplots(figsize=(6, 1.6))
+        ax.text(0.5, 0.5, "No numeric columns", ha="center", va="center")
+        ax.axis("off")
+        return _save(fig, path)
+    ncol = 3
+    nrow = int(np.ceil(len(cols) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.0 * ncol, 2.5 * nrow))
+    for ax, col in zip(np.atleast_1d(axes).ravel(), cols):
+        v = pd.to_numeric(df[col], errors="coerce").dropna()
+        if v.empty:
+            ax.axis("off")
+            continue
+        lo, hi = v.quantile(0.005), v.quantile(0.995)
+        ax.hist(v.clip(lo, hi), bins=bins, color=PALETTE[0])
+        ax.set_title(col, fontsize=9)
+        ax.tick_params(labelsize=7)
+    for ax in np.atleast_1d(axes).ravel()[len(cols):]:
+        ax.axis("off")
+    fig.suptitle("Numeric distributions (clipped at 0.5/99.5 percentiles for display)",
+                 fontsize=10)
+    fig.tight_layout()
+    return _save(fig, path)
+
+
+def plot_correlation_heatmap(matrix: pd.DataFrame, path: str | Path, *,
+                             max_features: int = 40) -> Path:
+    """Pearson correlations. Features beyond ``max_features`` are dropped from the
+    picture (the full matrix is in the CSV) because the labels stop being legible."""
+    plt = _setup()
+    m = matrix.iloc[:max_features, :max_features]
+    fig, ax = plt.subplots(figsize=(min(13, 0.34 * len(m) + 3),
+                                    min(12, 0.34 * len(m) + 2.4)))
+    im = ax.imshow(m.to_numpy(dtype=float), cmap="RdBu_r", vmin=-1, vmax=1)
+    ax.set_xticks(range(len(m)), m.columns, rotation=90, fontsize=6)
+    ax.set_yticks(range(len(m)), m.index, fontsize=6)
+    ax.grid(False)
+    fig.colorbar(im, ax=ax, shrink=0.75, label="Pearson r")
+    ax.set_title(f"Correlation of numeric features"
+                 + (f" (first {max_features} of {len(matrix)})"
+                    if len(matrix) > max_features else ""))
+    return _save(fig, path)
+
+
+def plot_default_rate_bars(table: pd.DataFrame, column: str, path: str | Path, *,
+                           top: int = 20) -> Path:
+    """Observed default rate by segment, with segment sizes in the labels and small
+    segments marked, since a rate over a handful of loans is noise."""
+    plt = _setup()
+    data = table.head(top).copy()
+    if data.empty or "default_rate" not in data:
+        return None
+    labels = [f"{r[column]} (n={int(r['loans']):,})"
+              + ("*" if r.get("small_segment") else "") for _, r in data.iterrows()]
+    colours = [PALETTE[1] if r.get("small_segment") else PALETTE[0]
+               for _, r in data.iterrows()]
+    fig, ax = plt.subplots(figsize=(7, max(2.5, 0.32 * len(data))))
+    ax.barh(labels[::-1], (data["default_rate"] * 100).to_numpy()[::-1],
+            color=colours[::-1])
+    ax.set_xlabel("observed default rate (%)")
+    ax.set_title(f"Default rate by {column}"
+                 + ("   * small segment" if data.get("small_segment", pd.Series()).any()
+                    else ""))
     return _save(fig, path)

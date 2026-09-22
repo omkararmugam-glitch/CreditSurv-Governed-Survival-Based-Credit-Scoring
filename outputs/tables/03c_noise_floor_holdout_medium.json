@@ -1,0 +1,71 @@
+{
+  "nsamples": 600,
+  "n_explained": 20,
+  "draw_seeds": [
+    101,
+    202
+  ],
+  "spearman_between_draws": 0.9451746266814761,
+  "top5_jaccard": 1.0,
+  "top10_jaccard": 1.0,
+  "mean_rel_disagreement": 0.05167525012366562,
+  "model": "discrete_hazard",
+  "model_tag": "holdout_medium",
+  "seconds_total": 69.4,
+  "provenance": {
+    "stage": "03c_noise_floor",
+    "created_at": "2026-09-22T15:21:17+00:00",
+    "code": {
+      "commit": "afcd4a4d1522575304a232965983e210d333085d",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 2016,
+      "mtime": "2026-09-21T15:08:27+00:00",
+      "sha256": "ecac9fa925b9d12473bf8b35f05b9a5dc510abb4368852260374a66217ed14a6"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "tag": "holdout_medium",
+      "model_tag": "holdout_medium",
+      "model": "discrete_hazard",
+      "n_explain": 20,
+      "nsamples": 600,
+      "n_background": 100,
+      "overwrite": false
+    },
+    "inputs": {
+      "model": {
+        "path": "outputs/models/02_models_holdout_medium.pkl",
+        "exists": true,
+        "bytes": 8477768,
+        "mtime": "2026-09-22T15:16:02+00:00",
+        "sha256": "e7a446b5d0f6d6d9e117d812cfcef33c60b688e553d2e91d85e529180fd0fee4"
+      },
+      "data": {
+        "path": "outputs/data/dev_sample.parquet",
+        "exists": true,
+        "bytes": 18169223,
+        "mtime": "2026-09-21T12:48:31+00:00",
+        "sha256": "a19de31b3c0452a456bffb46d76b1ae243a7cecdd24f9e29d58cf1cd38b3285a"
+      }
+    },
+    "outputs": {},
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

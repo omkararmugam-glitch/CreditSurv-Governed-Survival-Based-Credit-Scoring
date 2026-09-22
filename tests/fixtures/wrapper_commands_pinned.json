@@ -1,0 +1,779 @@
+{
+  "_source": "Captured from run_holdout.ps1 at commit afcd4a4 (before it was switched to creditsurv.plan), by evaluating its settings and stage table with the execution loop removed. This is what the wrapper ran; the plan module must reproduce it.",
+  "plans": {
+    "Small|overwrite=False": [
+      {
+        "name": "Stage 2  train 2007-2015, test 2016-2018",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/02_train_models.py",
+          "--split",
+          "out_of_time",
+          "--oot-cutoff",
+          "2016",
+          "--tag",
+          "holdout_small",
+          "--time-bin",
+          "3",
+          "--negative-subsample",
+          "0.4"
+        ]
+      },
+      {
+        "name": "Stage 3  naive vs SurvSHAP(t) comparison",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_small",
+          "--model-tag",
+          "holdout_small",
+          "--n-explain",
+          "20",
+          "--nsamples",
+          "146",
+          "--n-background",
+          "25"
+        ]
+      },
+      {
+        "name": "Stage 3c noise floor on the holdout model",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/03c_noise_floor.py",
+          "--tag",
+          "holdout_small",
+          "--model-tag",
+          "holdout_small",
+          "--n-explain",
+          "10",
+          "--nsamples",
+          "146",
+          "--n-background",
+          "25"
+        ]
+      },
+      {
+        "name": "Stage 3  grade-stratified explanations",
+        "tag": "holdout_small_strat",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_small_strat",
+          "--model-tag",
+          "holdout_small",
+          "--stratify-by",
+          "grade",
+          "--per-stratum",
+          "8",
+          "--skip-naive",
+          "--nsamples",
+          "146",
+          "--n-background",
+          "25"
+        ]
+      },
+      {
+        "name": "Stage 3b pre-registered grade G bootstrap",
+        "tag": "holdout_small_strat",
+        "args": [
+          "scripts/03b_bootstrap_segments.py",
+          "--tag",
+          "holdout_small_strat",
+          "--target",
+          "G",
+          "--features",
+          "annual_inc",
+          "mths_since_recent_inq",
+          "--n-boot",
+          "500"
+        ]
+      },
+      {
+        "name": "Stage 4  selection-bias diagnostic only",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/04_reject_inference.py",
+          "--tag",
+          "holdout_small",
+          "--model-tag",
+          "holdout_small",
+          "--diagnostic-only",
+          "--accepted-years",
+          "2016-2018",
+          "--rejected-years",
+          "2016-2018"
+        ]
+      },
+      {
+        "name": "Stage 5  report (section 6 preview only)",
+        "tag": "holdout_small / holdout_small_strat",
+        "args": [
+          "scripts/05_report.py",
+          "--tag",
+          "full",
+          "--holdout-tag",
+          "holdout_small",
+          "--holdout-strat-tag",
+          "holdout_small_strat",
+          "--dry-run"
+        ]
+      },
+      {
+        "name": "Provenance check",
+        "tag": "(all)",
+        "args": [
+          "scripts/check_provenance.py"
+        ]
+      }
+    ],
+    "Small|overwrite=True": [
+      {
+        "name": "Stage 2  train 2007-2015, test 2016-2018",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/02_train_models.py",
+          "--split",
+          "out_of_time",
+          "--oot-cutoff",
+          "2016",
+          "--tag",
+          "holdout_small",
+          "--time-bin",
+          "3",
+          "--negative-subsample",
+          "0.4",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3  naive vs SurvSHAP(t) comparison",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_small",
+          "--model-tag",
+          "holdout_small",
+          "--n-explain",
+          "20",
+          "--nsamples",
+          "146",
+          "--n-background",
+          "25",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3c noise floor on the holdout model",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/03c_noise_floor.py",
+          "--tag",
+          "holdout_small",
+          "--model-tag",
+          "holdout_small",
+          "--n-explain",
+          "10",
+          "--nsamples",
+          "146",
+          "--n-background",
+          "25",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3  grade-stratified explanations",
+        "tag": "holdout_small_strat",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_small_strat",
+          "--model-tag",
+          "holdout_small",
+          "--stratify-by",
+          "grade",
+          "--per-stratum",
+          "8",
+          "--skip-naive",
+          "--nsamples",
+          "146",
+          "--n-background",
+          "25",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3b pre-registered grade G bootstrap",
+        "tag": "holdout_small_strat",
+        "args": [
+          "scripts/03b_bootstrap_segments.py",
+          "--tag",
+          "holdout_small_strat",
+          "--target",
+          "G",
+          "--features",
+          "annual_inc",
+          "mths_since_recent_inq",
+          "--n-boot",
+          "500",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 4  selection-bias diagnostic only",
+        "tag": "holdout_small",
+        "args": [
+          "scripts/04_reject_inference.py",
+          "--tag",
+          "holdout_small",
+          "--model-tag",
+          "holdout_small",
+          "--diagnostic-only",
+          "--accepted-years",
+          "2016-2018",
+          "--rejected-years",
+          "2016-2018",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 5  report (section 6 preview only)",
+        "tag": "holdout_small / holdout_small_strat",
+        "args": [
+          "scripts/05_report.py",
+          "--tag",
+          "full",
+          "--holdout-tag",
+          "holdout_small",
+          "--holdout-strat-tag",
+          "holdout_small_strat",
+          "--dry-run"
+        ]
+      },
+      {
+        "name": "Provenance check",
+        "tag": "(all)",
+        "args": [
+          "scripts/check_provenance.py"
+        ]
+      }
+    ],
+    "Medium|overwrite=False": [
+      {
+        "name": "Stage 2  train 2007-2015, test 2016-2018",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/02_train_models.py",
+          "--split",
+          "out_of_time",
+          "--oot-cutoff",
+          "2016",
+          "--tag",
+          "holdout_medium",
+          "--time-bin",
+          "3",
+          "--negative-subsample",
+          "0.4"
+        ]
+      },
+      {
+        "name": "Stage 3  naive vs SurvSHAP(t) comparison",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_medium",
+          "--model-tag",
+          "holdout_medium",
+          "--n-explain",
+          "100",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100"
+        ]
+      },
+      {
+        "name": "Stage 3c noise floor on the holdout model",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/03c_noise_floor.py",
+          "--tag",
+          "holdout_medium",
+          "--model-tag",
+          "holdout_medium",
+          "--n-explain",
+          "20",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100"
+        ]
+      },
+      {
+        "name": "Stage 3  grade-stratified explanations",
+        "tag": "holdout_medium_strat",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_medium_strat",
+          "--model-tag",
+          "holdout_medium",
+          "--stratify-by",
+          "grade",
+          "--per-stratum",
+          "20",
+          "--skip-naive",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100"
+        ]
+      },
+      {
+        "name": "Stage 3b pre-registered grade G bootstrap",
+        "tag": "holdout_medium_strat",
+        "args": [
+          "scripts/03b_bootstrap_segments.py",
+          "--tag",
+          "holdout_medium_strat",
+          "--target",
+          "G",
+          "--features",
+          "annual_inc",
+          "mths_since_recent_inq",
+          "--n-boot",
+          "2000"
+        ]
+      },
+      {
+        "name": "Stage 4  selection-bias diagnostic only",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/04_reject_inference.py",
+          "--tag",
+          "holdout_medium",
+          "--model-tag",
+          "holdout_medium",
+          "--diagnostic-only",
+          "--accepted-years",
+          "2016-2018",
+          "--rejected-years",
+          "2016-2018"
+        ]
+      },
+      {
+        "name": "Stage 5  report (section 6 preview only)",
+        "tag": "holdout_medium / holdout_medium_strat",
+        "args": [
+          "scripts/05_report.py",
+          "--tag",
+          "full",
+          "--holdout-tag",
+          "holdout_medium",
+          "--holdout-strat-tag",
+          "holdout_medium_strat",
+          "--dry-run"
+        ]
+      },
+      {
+        "name": "Provenance check",
+        "tag": "(all)",
+        "args": [
+          "scripts/check_provenance.py"
+        ]
+      }
+    ],
+    "Medium|overwrite=True": [
+      {
+        "name": "Stage 2  train 2007-2015, test 2016-2018",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/02_train_models.py",
+          "--split",
+          "out_of_time",
+          "--oot-cutoff",
+          "2016",
+          "--tag",
+          "holdout_medium",
+          "--time-bin",
+          "3",
+          "--negative-subsample",
+          "0.4",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3  naive vs SurvSHAP(t) comparison",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_medium",
+          "--model-tag",
+          "holdout_medium",
+          "--n-explain",
+          "100",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3c noise floor on the holdout model",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/03c_noise_floor.py",
+          "--tag",
+          "holdout_medium",
+          "--model-tag",
+          "holdout_medium",
+          "--n-explain",
+          "20",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3  grade-stratified explanations",
+        "tag": "holdout_medium_strat",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_medium_strat",
+          "--model-tag",
+          "holdout_medium",
+          "--stratify-by",
+          "grade",
+          "--per-stratum",
+          "20",
+          "--skip-naive",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3b pre-registered grade G bootstrap",
+        "tag": "holdout_medium_strat",
+        "args": [
+          "scripts/03b_bootstrap_segments.py",
+          "--tag",
+          "holdout_medium_strat",
+          "--target",
+          "G",
+          "--features",
+          "annual_inc",
+          "mths_since_recent_inq",
+          "--n-boot",
+          "2000",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 4  selection-bias diagnostic only",
+        "tag": "holdout_medium",
+        "args": [
+          "scripts/04_reject_inference.py",
+          "--tag",
+          "holdout_medium",
+          "--model-tag",
+          "holdout_medium",
+          "--diagnostic-only",
+          "--accepted-years",
+          "2016-2018",
+          "--rejected-years",
+          "2016-2018",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 5  report (section 6 preview only)",
+        "tag": "holdout_medium / holdout_medium_strat",
+        "args": [
+          "scripts/05_report.py",
+          "--tag",
+          "full",
+          "--holdout-tag",
+          "holdout_medium",
+          "--holdout-strat-tag",
+          "holdout_medium_strat",
+          "--dry-run"
+        ]
+      },
+      {
+        "name": "Provenance check",
+        "tag": "(all)",
+        "args": [
+          "scripts/check_provenance.py"
+        ]
+      }
+    ],
+    "Full|overwrite=False": [
+      {
+        "name": "Stage 2  train 2007-2015, test 2016-2018",
+        "tag": "holdout",
+        "args": [
+          "scripts/02_train_models.py",
+          "--full",
+          "--split",
+          "out_of_time",
+          "--oot-cutoff",
+          "2016",
+          "--tag",
+          "holdout",
+          "--time-bin",
+          "3",
+          "--negative-subsample",
+          "0.4"
+        ]
+      },
+      {
+        "name": "Stage 3  naive vs SurvSHAP(t) comparison",
+        "tag": "holdout",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout",
+          "--model-tag",
+          "holdout",
+          "--n-explain",
+          "250",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100"
+        ]
+      },
+      {
+        "name": "Stage 3c noise floor on the holdout model",
+        "tag": "holdout",
+        "args": [
+          "scripts/03c_noise_floor.py",
+          "--tag",
+          "holdout",
+          "--model-tag",
+          "holdout",
+          "--n-explain",
+          "40",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100"
+        ]
+      },
+      {
+        "name": "Stage 3  grade-stratified explanations",
+        "tag": "holdout_strat",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_strat",
+          "--model-tag",
+          "holdout",
+          "--stratify-by",
+          "grade",
+          "--per-stratum",
+          "36",
+          "--skip-naive",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100"
+        ]
+      },
+      {
+        "name": "Stage 3b pre-registered grade G bootstrap",
+        "tag": "holdout_strat",
+        "args": [
+          "scripts/03b_bootstrap_segments.py",
+          "--tag",
+          "holdout_strat",
+          "--target",
+          "G",
+          "--features",
+          "annual_inc",
+          "mths_since_recent_inq",
+          "--n-boot",
+          "5000"
+        ]
+      },
+      {
+        "name": "Stage 4  selection-bias diagnostic only",
+        "tag": "holdout",
+        "args": [
+          "scripts/04_reject_inference.py",
+          "--tag",
+          "holdout",
+          "--model-tag",
+          "holdout",
+          "--diagnostic-only",
+          "--accepted-years",
+          "2016-2018",
+          "--rejected-years",
+          "2016-2018"
+        ]
+      },
+      {
+        "name": "Stage 5  report (section 6)",
+        "tag": "holdout / holdout_strat",
+        "args": [
+          "scripts/05_report.py",
+          "--tag",
+          "full",
+          "--holdout-tag",
+          "holdout",
+          "--holdout-strat-tag",
+          "holdout_strat"
+        ]
+      },
+      {
+        "name": "Provenance check",
+        "tag": "(all)",
+        "args": [
+          "scripts/check_provenance.py"
+        ]
+      }
+    ],
+    "Full|overwrite=True": [
+      {
+        "name": "Stage 2  train 2007-2015, test 2016-2018",
+        "tag": "holdout",
+        "args": [
+          "scripts/02_train_models.py",
+          "--full",
+          "--split",
+          "out_of_time",
+          "--oot-cutoff",
+          "2016",
+          "--tag",
+          "holdout",
+          "--time-bin",
+          "3",
+          "--negative-subsample",
+          "0.4",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3  naive vs SurvSHAP(t) comparison",
+        "tag": "holdout",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout",
+          "--model-tag",
+          "holdout",
+          "--n-explain",
+          "250",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3c noise floor on the holdout model",
+        "tag": "holdout",
+        "args": [
+          "scripts/03c_noise_floor.py",
+          "--tag",
+          "holdout",
+          "--model-tag",
+          "holdout",
+          "--n-explain",
+          "40",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3  grade-stratified explanations",
+        "tag": "holdout_strat",
+        "args": [
+          "scripts/03_explain.py",
+          "--tag",
+          "holdout_strat",
+          "--model-tag",
+          "holdout",
+          "--stratify-by",
+          "grade",
+          "--per-stratum",
+          "36",
+          "--skip-naive",
+          "--nsamples",
+          "600",
+          "--n-background",
+          "100",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 3b pre-registered grade G bootstrap",
+        "tag": "holdout_strat",
+        "args": [
+          "scripts/03b_bootstrap_segments.py",
+          "--tag",
+          "holdout_strat",
+          "--target",
+          "G",
+          "--features",
+          "annual_inc",
+          "mths_since_recent_inq",
+          "--n-boot",
+          "5000",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 4  selection-bias diagnostic only",
+        "tag": "holdout",
+        "args": [
+          "scripts/04_reject_inference.py",
+          "--tag",
+          "holdout",
+          "--model-tag",
+          "holdout",
+          "--diagnostic-only",
+          "--accepted-years",
+          "2016-2018",
+          "--rejected-years",
+          "2016-2018",
+          "--overwrite"
+        ]
+      },
+      {
+        "name": "Stage 5  report (section 6)",
+        "tag": "holdout / holdout_strat",
+        "args": [
+          "scripts/05_report.py",
+          "--tag",
+          "full",
+          "--holdout-tag",
+          "holdout",
+          "--holdout-strat-tag",
+          "holdout_strat"
+        ]
+      },
+      {
+        "name": "Provenance check",
+        "tag": "(all)",
+        "args": [
+          "scripts/check_provenance.py"
+        ]
+      }
+    ]
+  }
+}

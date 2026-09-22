@@ -1,0 +1,369 @@
+{
+  "model": "discrete_hazard",
+  "tag": "holdout_small",
+  "model_tag": "holdout_small",
+  "n_explained": 20,
+  "stratified_by": null,
+  "strata_counts": {},
+  "nsamples": 146,
+  "n_background": 25,
+  "times": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "seconds_total": 9.4,
+  "seconds_per_borrower": 0.469,
+  "efficiency_worst_residual": 0.0,
+  "efficiency_pass": true,
+  "global_importance": {
+    "annual_inc": 0.0141118121573782,
+    "loan_amnt": 0.014081617989374944,
+    "addr_state": 0.013168846507958673,
+    "acc_open_past_24mths": 0.0131077188910682,
+    "verification_status": 0.010031578276050248,
+    "tot_hi_cred_lim": 0.008729399658060381,
+    "percent_bc_gt_75": 0.008252091907277473,
+    "mths_since_recent_inq": 0.007657512358556796,
+    "dti": 0.007593201694383267,
+    "mo_sin_old_rev_tl_op": 0.007415600399911934,
+    "inq_last_6mths": 0.007019462247452628,
+    "total_il_high_credit_limit": 0.006930405909298609,
+    "mths_since_last_record": 0.00676168330795836,
+    "installment": 0.0067104113001515584,
+    "total_bc_limit": 0.006168716145375949,
+    "mths_since_recent_bc": 0.006060267831041304,
+    "num_tl_op_past_12m": 0.005917941250895647,
+    "num_rev_tl_bal_gt_0": 0.005729312975117404,
+    "purpose": 0.005035160782339664,
+    "mo_sin_old_il_acct": 0.004887060862299444,
+    "mths_since_last_delinq": 0.004765005035404236,
+    "mths_since_last_major_derog": 0.004738337903839838,
+    "home_ownership": 0.004670625005537845,
+    "total_acc": 0.004615918062484416,
+    "num_il_tl": 0.004248290674902624,
+    "mo_sin_rcnt_tl": 0.004246030125971173,
+    "bc_open_to_buy": 0.004005892715429536,
+    "pub_rec": 0.003995331626259391,
+    "delinq_2yrs": 0.003980677482031112,
+    "mths_since_recent_bc_dlq_missing": 0.003958026974777845,
+    "collections_12_mths_ex_med": 0.0038813348515539963,
+    "tax_liens": 0.003879029695582076,
+    "revol_util_missing": 0.0038232150208427364,
+    "tot_coll_amt": 0.003658595538366114,
+    "revol_util": 0.0036498546945155316,
+    "revol_bal": 0.0034187829785581325,
+    "total_rev_hi_lim": 0.0032673051252790366,
+    "acc_now_delinq": 0.0032420002904485325,
+    "percent_bc_gt_75_missing": 0.0031964758236689233,
+    "mort_acc": 0.0031356838264211726,
+    "num_op_rev_tl": 0.0031124568452992247,
+    "num_bc_tl": 0.003045205344265333,
+    "mths_since_recent_bc_dlq": 0.003030856793363002,
+    "num_accts_ever_120_pd": 0.0030152306477532207,
+    "delinq_amnt": 0.0030038755372721396,
+    "bc_util": 0.002944516073198209,
+    "avg_cur_bal": 0.002936535669923146,
+    "mo_sin_rcnt_rev_tl_op": 0.002926016966879916,
+    "mths_since_recent_inq_missing": 0.002877342802928778,
+    "num_actv_bc_tl": 0.0028422631505599927,
+    "mths_since_recent_bc_missing": 0.0027855577508249054,
+    "bc_util_missing": 0.0027789877475054283,
+    "num_tl_30dpd": 0.002774144062495486,
+    "open_acc": 0.002748756943671078,
+    "mths_since_last_major_derog_missing": 0.0027287367023963076,
+    "pct_tl_nvr_dlq": 0.00266284372926698,
+    "application_type": 0.002640025649760575,
+    "num_tl_90g_dpd_24m": 0.0026093169709794934,
+    "num_actv_rev_tl": 0.0026078084532021603,
+    "mths_since_recent_revol_delinq": 0.00256190004547944,
+    "mths_since_last_record_missing": 0.0025556934609670917,
+    "num_sats": 0.0025384844342668028,
+    "num_bc_sats": 0.002436693961481187,
+    "tot_cur_bal": 0.0023698591092262597,
+    "num_rev_accts": 0.002300063170183299,
+    "pub_rec_bankruptcies": 0.0021105248831760483,
+    "total_bal_ex_mort": 0.0020637815586196082,
+    "mths_since_last_delinq_missing": 0.0019990357351009334,
+    "mo_sin_old_il_acct_missing": 0.0018844387857119924,
+    "mths_since_recent_revol_delinq_missing": 0.0014839455207592504,
+    "initial_list_status": 0.0013024910116378277,
+    "chargeoff_within_12_mths": 0.0,
+    "pct_tl_nvr_dlq_missing": 0.0
+  },
+  "naive_vs_survshap": {
+    "n_observations": 20,
+    "at_month": 36.0,
+    "spearman": 0.7005,
+    "pearson": 0.9239,
+    "top5_overlap": 0.6667,
+    "top10_overlap": 0.8182,
+    "sign_agreement": 0.6338,
+    "sign_disagreements": [
+      "open_acc",
+      "revol_bal",
+      "mort_acc",
+      "tax_liens",
+      "acc_now_delinq",
+      "tot_coll_amt",
+      "tot_cur_bal",
+      "total_rev_hi_lim",
+      "bc_util",
+      "mo_sin_rcnt_rev_tl_op",
+      "num_actv_bc_tl",
+      "num_rev_accts",
+      "num_sats",
+      "num_tl_op_past_12m",
+      "percent_bc_gt_75",
+      "total_bal_ex_mort",
+      "total_bc_limit",
+      "total_il_high_credit_limit",
+      "mths_since_last_delinq_missing",
+      "mths_since_last_major_derog_missing",
+      "mths_since_recent_bc_dlq_missing",
+      "mths_since_recent_revol_delinq_missing",
+      "revol_util_missing",
+      "bc_util_missing",
+      "percent_bc_gt_75_missing",
+      "application_type"
+    ],
+    "top5_sign_disagreements": [],
+    "mean_time_variation_share": 0.5455,
+    "most_time_varying": [
+      "mths_since_last_record",
+      "num_bc_sats",
+      "delinq_2yrs",
+      "bc_util_missing",
+      "total_rev_hi_lim"
+    ],
+    "verdict": "MEANINGFUL DISAGREEMENT: Spearman 0.701 (floor 0.8), top-5 overlap 0.667 (floor 0.6). Ranking differs enough to change which reasons get reported."
+  },
+  "adverse_action": {
+    "applicant_id": "APP-000015",
+    "decision": "declined",
+    "notice_date": "2026-09-22",
+    "model": "discrete_hazard",
+    "predicted_default_probability": 0.2666685415470835,
+    "horizon_months": 36,
+    "n_reasons": 4,
+    "reasons": [
+      {
+        "rank": 1,
+        "feature": "acc_open_past_24mths",
+        "reason": "Number of accounts opened recently",
+        "attribution": -0.033392,
+        "feature_value": 6.0,
+        "direction_consistent": true
+      },
+      {
+        "rank": 2,
+        "feature": "loan_amnt",
+        "reason": "Amount of credit requested",
+        "attribution": -0.023161,
+        "feature_value": 25000.0,
+        "direction_consistent": true
+      },
+      {
+        "rank": 3,
+        "feature": "dti",
+        "reason": "Excessive obligations in relation to income",
+        "attribution": -0.007948,
+        "feature_value": 25.059999465942383,
+        "direction_consistent": true
+      },
+      {
+        "rank": 4,
+        "feature": "revol_util_missing",
+        "reason": "Proportion of available revolving credit currently in use",
+        "attribution": -0.006934,
+        "feature_value": 0,
+        "direction_consistent": false
+      }
+    ],
+    "excluded_helpful_features": [
+      "mo_sin_old_rev_tl_op",
+      "tot_hi_cred_lim",
+      "num_il_tl",
+      "annual_inc",
+      "mths_since_last_record"
+    ],
+    "fair_lending_flags": [
+      "addr_state"
+    ]
+  },
+  "segment_stability": {
+    "purpose": {
+      "segment": "purpose",
+      "n_levels": 1,
+      "levels": [
+        "debt_consolidation"
+      ],
+      "segment_sizes": {
+        "debt_consolidation": 12
+      },
+      "rank_correlation_by_level": {
+        "debt_consolidation": 0.8432
+      },
+      "topk_overlap_by_level": {
+        "debt_consolidation": 0.6667
+      },
+      "topk_by_level": {
+        "debt_consolidation": [
+          "annual_inc",
+          "loan_amnt",
+          "acc_open_past_24mths",
+          "addr_state",
+          "tot_hi_cred_lim"
+        ]
+      },
+      "min_rank_correlation": 0.8432,
+      "mean_rank_correlation": 0.8432,
+      "mean_topk_overlap": 0.6667,
+      "k": 5,
+      "least_stable_features": [
+        "loan_amnt",
+        "installment",
+        "annual_inc",
+        "dti",
+        "open_acc"
+      ],
+      "most_stable_features": [
+        "home_ownership",
+        "verification_status",
+        "addr_state",
+        "application_type",
+        "initial_list_status"
+      ],
+      "global_top5": [
+        "annual_inc",
+        "loan_amnt",
+        "addr_state",
+        "acc_open_past_24mths",
+        "verification_status"
+      ],
+      "verdict": "DRIFTS: rank correlation 0.843 is below its 0.85 floor (worst segment 'debt_consolidation'); mean top-5 overlap 0.667 is below its 0.7 floor. Which features a borrower would be told about changes between segments, so one global explanation is not a fair summary of purpose. No individual feature exceeded CV 0.5, so the drift is spread across many features rather than driven by a few."
+    },
+    "term": {
+      "segment": "term",
+      "n_levels": 1,
+      "levels": [
+        "36"
+      ],
+      "segment_sizes": {
+        "36": 12
+      },
+      "rank_correlation_by_level": {
+        "36": 0.9329
+      },
+      "topk_overlap_by_level": {
+        "36": 1.0
+      },
+      "topk_by_level": {
+        "36": [
+          "addr_state",
+          "annual_inc",
+          "verification_status",
+          "acc_open_past_24mths",
+          "loan_amnt"
+        ]
+      },
+      "min_rank_correlation": 0.9329,
+      "mean_rank_correlation": 0.9329,
+      "mean_topk_overlap": 1.0,
+      "k": 5,
+      "least_stable_features": [
+        "loan_amnt",
+        "installment",
+        "annual_inc",
+        "dti",
+        "open_acc"
+      ],
+      "most_stable_features": [
+        "home_ownership",
+        "verification_status",
+        "addr_state",
+        "application_type",
+        "initial_list_status"
+      ],
+      "global_top5": [
+        "annual_inc",
+        "loan_amnt",
+        "addr_state",
+        "acc_open_past_24mths",
+        "verification_status"
+      ],
+      "verdict": "STABLE: minimum rank correlation 0.933 (floor 0.85), mean top-5 overlap 1.000 (floor 0.7), 0 feature(s) above CV 0.5. Importance is consistent across term, so a global explanation is a fair summary."
+    }
+  },
+  "provenance": {
+    "stage": "03_explain",
+    "created_at": "2026-09-22T15:11:09+00:00",
+    "code": {
+      "commit": "afcd4a4d1522575304a232965983e210d333085d",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 2016,
+      "mtime": "2026-09-21T15:08:27+00:00",
+      "sha256": "ecac9fa925b9d12473bf8b35f05b9a5dc510abb4368852260374a66217ed14a6"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "tag": "holdout_small",
+      "model_tag": "holdout_small",
+      "model": "discrete_hazard",
+      "n_explain": 20,
+      "n_background": 25,
+      "nsamples": 146,
+      "at_month": 36.0,
+      "stratify_by": null,
+      "per_stratum": 36,
+      "skip_naive": false,
+      "overwrite": false
+    },
+    "inputs": {
+      "model": {
+        "path": "outputs/models/02_models_holdout_small.pkl",
+        "exists": true,
+        "bytes": 8477768,
+        "mtime": "2026-09-22T15:10:49+00:00",
+        "sha256": "3336429f1d303e38b0c49575f582e52c3a72e275b5914e6f72ce096cbc4eb688"
+      },
+      "data": {
+        "path": "outputs/data/dev_sample.parquet",
+        "exists": true,
+        "bytes": 18169223,
+        "mtime": "2026-09-21T12:48:31+00:00",
+        "sha256": "a19de31b3c0452a456bffb46d76b1ae243a7cecdd24f9e29d58cf1cd38b3285a"
+      }
+    },
+    "outputs": {
+      "per_borrower_importance": {
+        "path": "outputs/tables/03_per_borrower_importance_holdout_small.parquet",
+        "exists": true,
+        "bytes": 62091,
+        "mtime": "2026-09-22T15:11:02+00:00",
+        "sha256": "0e3231b9a507839ab2fc7ecb3fd079446b38ea85ebb153e7b05a52c7a2e1abc3"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

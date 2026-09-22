@@ -1,0 +1,7 @@
+home_ownership,loans,events,default_rate,median_duration,small_segment
+OTHER,144,27,0.1875,32.5,False
+NONE,49,7,0.1429,27.0,True
+RENT,893599,124085,0.1389,18.0,False
+OWN,252850,29872,0.1181,17.0,False
+MORTGAGE,1110152,114546,0.1032,18.0,False
+ANY,996,56,0.0562,7.0,False

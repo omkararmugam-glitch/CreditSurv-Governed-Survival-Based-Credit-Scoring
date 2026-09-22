@@ -15,6 +15,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import json
 import pickle
 import sys
 import time
@@ -25,6 +26,11 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from creditsurv.cleaning import (  # noqa: E402
+    clean,
+    fit_values,
+    policy_from_config,
+)
 from creditsurv.config import load_config  # noqa: E402
 from creditsurv.features.build import (  # noqa: E402
     build_design_matrix,
@@ -106,7 +112,9 @@ def main() -> int:
     refused = guard_outputs(
         find_existing_outputs(
             [cfg.paths.tables_dir, cfg.paths.figures_dir, cfg.paths.models_dir],
-            "02", tag),
+            "02", tag)
+        # The cleaning report is written by this stage too, so it is guarded here.
+        + find_existing_outputs([cfg.paths.tables_dir], "00", tag),
         args.overwrite, script="02_train_models.py")
     if refused:
         return refused
@@ -133,6 +141,37 @@ def main() -> int:
         df, test_size=cfg.model.test_size, seed=cfg.model.seed, scheme=args.split,
         out_of_time_cutoff=args.oot_cutoff,
     )
+
+    # --- cleaning (creditsurv/cleaning.py: the same module the dashboard uses) ---
+    # Values are fitted on the TRAINING split only and saved in the model bundle,
+    # so scoring an upload later reapplies these numbers instead of learning its
+    # own. Under the default v1-parity policy nothing is altered -- the report
+    # records what was seen, and tests/test_cleaning.py pins that no value moves.
+    policy = policy_from_config(cfg)
+    clean_values = fit_values(df.loc[train_idx], spec, policy=policy, source=src)
+    # Row exclusions happen in Stage 1 (they need the outcome), so their counts are
+    # read in here rather than recomputed, keeping one report per run.
+    audit_file = cfg.paths.tables_dir / "01_label_audit.json"
+    label_audit = None
+    if audit_file.exists():
+        try:
+            label_audit = json.loads(audit_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            label_audit = None
+    df, clean_report, _ = clean(df, spec, clean_values, policy=policy,
+                               label_audit=label_audit)
+    print(f"  cleaning: policy {policy.version}, values fitted on "
+          f"{clean_values.fitted_rows:,} training rows")
+    for line in clean_report.plain_english()[:6]:
+        print(f"    {line}")
+    if policy.changes_model_inputs():
+        print("  WARNING: this cleaning policy alters model inputs; results are NOT "
+              "comparable with v1-parity runs.")
+    write_json({"cleaning": clean_report.to_dict(),
+                "values": clean_values.to_dict(),
+                "policy": {k: (list(v) if isinstance(v, tuple) else v)
+                           for k, v in vars(policy).items()}},
+               cfg.paths.tables_dir / f"00_cleaning_report_{tag}.json")
     print(f"  split={args.split}  train={len(train_idx):,}  test={len(test_idx):,}")
     years = {}
     if "issue_year" in df.columns:
@@ -379,6 +418,10 @@ def main() -> int:
     with open(model_path, "wb") as fh:
         pickle.dump({"artefacts": artefacts, "spec": spec,
                      "train_idx": train_idx, "test_idx": test_idx,
+                     # Fitted on training rows only; the dashboard reapplies these.
+                     "cleaning_values": clean_values.to_dict(),
+                     "cleaning_policy": {k: (list(v) if isinstance(v, tuple) else v)
+                                         for k, v in vars(policy).items()},
                      # Stages 3 and 4 read this instead of guessing from the tag.
                      "data_source": encode_data_source(src),
                      "split": {"scheme": args.split, "oot_cutoff": args.oot_cutoff,

@@ -1,0 +1,30 @@
+{
+  "overview": {
+    "rows": 200000,
+    "columns": 90,
+    "memory_mb": 76.5,
+    "numeric_columns": 69,
+    "categorical_columns": 16,
+    "duplicate_ids": 0,
+    "date_range": [
+      "2007-07-01",
+      "2018-12-01"
+    ],
+    "event_rate": 0.1201,
+    "median_duration_months": 17.0
+  },
+  "findings": [
+    "The overall default rate is 12.0% over 200,000 loans.",
+    "5 column(s) are at least half missing: mths_since_last_record (84%), mths_since_recent_bc_dlq (77%), mths_since_last_major_derog (74%), mths_since_recent_revol_delinq (67%), mths_since_last_delinq (51%).",
+    "43 of 90 columns have no missing values.",
+    "21 feature pair(s) correlate at |r| >= 0.80, the strongest being open_acc~num_sats (+1.00), installment_to_income~loan_to_income (+0.99), num_actv_rev_tl~num_rev_tl_bal_gt_0 (+0.98), tot_cur_bal~tot_hi_cred_lim (+0.97), loan_amnt~installment (+0.95).",
+    "Columns with the longest tails by the 1.5x IQR rule: num_accts_ever_120_pd (22.2% of rows), delinq_2yrs (18.8% of rows), pub_rec (15.9% of rows).",
+    "By grade, the default rate runs from 3.3% (A, 38,207 loans) to 36.6% (G, 1,115 loans).",
+    "By term_months, the default rate runs from 10.2% (36, 142,371 loans) to 16.4% (60, 57,629 loans).",
+    "By purpose, the default rate runs from 8.8% (car, 2,066 loans) to 18.7% (small_business, 2,202 loans).",
+    "By income_band, the default rate runs from 8.3% (150k+, 13,854 loans) to 14.4% (<30k, 12,080 loans).",
+    "By home_ownership, the default rate runs from 6.5% (ANY, 108 loans) to 14.0% (RENT, 78,896 loans).",
+    "By vintage, the default rate runs from 1.7% (2018, 43,862 loans) to 14.6% (2008, 137 loans).",
+    "Observed default rates fall for the most recent vintages because those loans have had less time to default (right censoring), not necessarily because they are safer."
+  ]
+}

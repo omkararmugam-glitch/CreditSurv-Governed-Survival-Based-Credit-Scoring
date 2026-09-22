@@ -1,0 +1,97 @@
+{
+  "provenance": {
+    "stage": "01b_eda",
+    "created_at": "2026-09-22T20:27:12+00:00",
+    "code": {
+      "commit": "afcd4a4d1522575304a232965983e210d333085d",
+      "code_dirty": true,
+      "dirty_files": [
+        "onfig/config.yaml",
+        "pyproject.toml",
+        "scripts/02_train_models.py",
+        "src/creditsurv/config.py",
+        "src/creditsurv/provenance.py",
+        "src/creditsurv/reporting/figures.py",
+        "scripts/01b_eda.py",
+        "src/creditsurv/batch.py",
+        "src/creditsurv/cleaning.py",
+        "src/creditsurv/drift.py",
+        "src/creditsurv/eda.py",
+        "src/creditsurv/plan.py",
+        "src/creditsurv/runner.py",
+        "src/creditsurv/status.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 3845,
+      "mtime": "2026-09-22T19:46:36+00:00",
+      "sha256": "22a55d22b3d0dd397b06dc6178a462a0c4003e5e80b0e73deb3f37a7588e1423"
+    },
+    "args": {
+      "tag": "full",
+      "sample": null,
+      "diagnostic_tag": "full"
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      }
+    },
+    "outputs": {
+      "report": {
+        "path": "outputs/eda/full/index.html",
+        "exists": true,
+        "bytes": 47079,
+        "mtime": "2026-09-22T20:27:12+00:00",
+        "sha256": "7c60ff93f1a396c73f41b50909b04cd183788005bd6846d06321b7930f3bf995"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  },
+  "overview": {
+    "rows": 2257790,
+    "columns": 90,
+    "memory_mb": 863.1,
+    "numeric_columns": 69,
+    "categorical_columns": 16,
+    "duplicate_ids": 0,
+    "date_range": [
+      "2007-06-01",
+      "2018-12-01"
+    ],
+    "event_rate": 0.119,
+    "median_duration_months": 17.0
+  },
+  "findings": [
+    "The overall default rate is 11.9% over 2,257,790 loans.",
+    "5 column(s) are at least half missing: mths_since_last_record (84%), mths_since_recent_bc_dlq (77%), mths_since_last_major_derog (74%), mths_since_recent_revol_delinq (67%), mths_since_last_delinq (51%).",
+    "43 of 90 columns have no missing values.",
+    "21 feature pair(s) correlate at |r| >= 0.80, the strongest being open_acc~num_sats (+1.00), installment_to_income~loan_to_income (+1.00), num_actv_rev_tl~num_rev_tl_bal_gt_0 (+0.98), tot_cur_bal~tot_hi_cred_lim (+0.98), loan_amnt~installment (+0.95).",
+    "Columns with the longest tails by the 1.5x IQR rule: num_accts_ever_120_pd (22.3% of rows), delinq_2yrs (18.6% of rows), pub_rec (15.8% of rows).",
+    "By grade, the default rate runs from 3.3% (A, 432,923 loans) to 38.1% (G, 11,971 loans).",
+    "By term_months, the default rate runs from 10.2% (36, 1,607,205 loans) to 16.2% (60, 650,585 loans).",
+    "By purpose, the default rate runs from 8.9% (car, 23,948 loans) to 18.7% (small_business, 24,525 loans).",
+    "By income_band, the default rate runs from 8.0% (150k+, 157,882 loans) to 14.1% (<30k, 135,392 loans).",
+    "By home_ownership, the default rate runs from 5.6% (ANY, 996 loans) to 18.8% (OTHER, 144 loans).",
+    "By vintage, the default rate runs from 1.8% (2018, 495,140 loans) to 17.7% (2007, 249 loans).",
+    "Observed default rates fall for the most recent vintages because those loans have had less time to default (right censoring), not necessarily because they are safer."
+  ]
+}

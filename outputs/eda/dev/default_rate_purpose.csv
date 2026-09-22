@@ -1,0 +1,15 @@
+purpose,loans,events,default_rate,median_duration,small_segment
+small_business,2202,411,0.1866,17.0,False
+educational,19,3,0.1579,29.0,True
+moving,1335,201,0.1506,16.0,False
+renewable_energy,123,18,0.1463,16.0,False
+debt_consolidation,113528,14881,0.1311,18.0,False
+medical,2449,306,0.1249,16.0,False
+other,12484,1510,0.121,16.0,False
+wedding,191,21,0.1099,32.0,False
+vacation,1386,148,0.1068,16.0,False
+house,1243,129,0.1038,12.0,False
+major_purchase,4408,457,0.1037,16.0,False
+home_improvement,13344,1370,0.1027,17.0,False
+credit_card,45222,4392,0.0971,18.0,False
+car,2066,181,0.0876,17.0,False

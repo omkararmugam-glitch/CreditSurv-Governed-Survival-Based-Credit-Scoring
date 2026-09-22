@@ -13,7 +13,9 @@ from typing import Any
 import yaml
 
 __all__ = ["Paths", "IngestConfig", "SampleConfig", "ModelConfig",
-           "ExplainConfig", "DiagnosticConfig", "Config", "load_config"]
+           "ExplainConfig", "DiagnosticConfig", "CleaningConfig", "DecisionConfig",
+           "Config",
+           "load_config"]
 
 
 @dataclass(frozen=True)
@@ -107,6 +109,75 @@ class DiagnosticConfig:
 
 
 @dataclass(frozen=True)
+class CleaningConfig:
+    """Cleaning rules, mirrored into :class:`creditsurv.cleaning.CleaningPolicy`.
+
+    The defaults are the rule set the current trained models were produced under
+    (``v1-parity``): read numbers written as text, align categories to the training
+    levels, flag anything unusual, change no value. The four switches that would
+    alter a model input are off; turning one on changes the training data and
+    therefore requires retraining.
+    """
+
+    version: str = "v1-parity"
+    coerce_numeric_text: bool = True
+    align_categories: bool = True
+    unseen_category_to_other: bool = False
+    rare_category_min_count: int = 0
+    clip_numeric: bool = False
+    clip_quantiles: tuple[float, float] = (0.001, 0.999)
+    range_quantiles: tuple[float, float] = (0.005, 0.995)
+    drop_duplicate_ids: bool = False
+
+
+@dataclass(frozen=True)
+class DecisionConfig:
+    """The approve/reject policy applied to a scored batch.
+
+    The survival model returns a probability, not a decision. Turning one into
+    the other is a *policy* choice and is therefore stated here, in config, shown
+    on the dashboard and written into every run summary -- never buried in code.
+
+    The default was chosen on the full model's 451,558-loan test split: rejecting
+    at a 36-month default probability of 0.30 declines 17.0% of applicants and
+    takes the approved population's observed default rate from 11.8% to 8.9%,
+    while rejected applicants default at 25.9%. It also sits just above the 80th
+    percentile of predicted risk (0.281). Every borrower in that population had
+    already been approved by Lending Club, so a real applicant pool is riskier
+    (see the Stage 4 selection-bias result).
+    """
+
+    model_tag: str = "full"
+    """Which trained bundle the dashboard scores with."""
+    model: str = "discrete_hazard"
+    horizon_months: int = 36
+    reject_at_or_above: float = 0.30
+    explain_nsamples: int = 600
+    explain_n_background: int = 100
+    """Kept at the batch settings: a single applicant costs ~2.7s either way, and
+    cheaper settings make the stated reasons unstable."""
+    max_explained: int = 100
+    """Cap on rejected applicants explained per run (~2.7s each). Rows beyond it
+    are marked as not explained rather than left silently blank."""
+    background_rows: int = 20_000
+    """Training rows sampled before k-means summarising to explain_n_background."""
+    chunk_rows: int = 50_000
+    """An upload is read, cleaned, scored and explained this many rows at a time, so
+    peak memory follows the block size rather than the file size."""
+    drift_min_rows: int = 500
+    """Below this many rows the drift check reports "too few rows to assess" rather
+    than a colour: see creditsurv.drift.MIN_ROWS for the arithmetic."""
+    background_above_mb: float = 25.0
+    """Uploads at least this large run in a detached background process
+    (creditsurv.runner) instead of inside the page, so the browser can be left.
+    Small files stay inline: a background run reloads the model and its SHAP
+    background from scratch, which costs 20-40s the page already has cached."""
+    min_feature_coverage: float = 0.60
+    """Below this share of the model's features present in the upload, the run is
+    flagged as degraded everywhere it is reported."""
+
+
+@dataclass(frozen=True)
 class Config:
     paths: Paths = field(default_factory=Paths)
     ingest: IngestConfig = field(default_factory=IngestConfig)
@@ -115,6 +186,8 @@ class Config:
     model: ModelConfig = field(default_factory=ModelConfig)
     explain: ExplainConfig = field(default_factory=ExplainConfig)
     diagnostic: DiagnosticConfig = field(default_factory=DiagnosticConfig)
+    cleaning: CleaningConfig = field(default_factory=CleaningConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
 
 
 def _as_path(value: Any) -> Path | None:
@@ -157,4 +230,6 @@ def load_config(path: str | Path = "config/config.yaml") -> Config:
         model=section("model", ModelConfig),
         explain=section("explain", ExplainConfig),
         diagnostic=section("diagnostic", DiagnosticConfig),
+        cleaning=section("cleaning", CleaningConfig),
+        decision=section("decision", DecisionConfig),
     )

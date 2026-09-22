@@ -1,0 +1,8 @@
+grade,loans,events,default_rate,median_duration,small_segment
+G,11971,4560,0.3809,15.0,False
+F,41553,14492,0.3488,17.0,False
+E,135078,36040,0.2668,17.0,False
+D,323707,61067,0.1886,16.0,False
+C,649384,85655,0.1319,18.0,False
+B,663174,52573,0.0793,18.0,False
+A,432923,14206,0.0328,16.0,False

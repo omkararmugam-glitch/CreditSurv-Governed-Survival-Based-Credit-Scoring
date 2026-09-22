@@ -58,3 +58,39 @@ diagnostic:
   separability_auc_weak: 0.60
   min_common_support: 0.05
   seed: 20260921
+
+# Cleaning rules, applied by creditsurv/cleaning.py to BOTH training and
+# dashboard scoring. Defaults are v1-parity: the rule set the current trained
+# models were produced under. Every switch below that is false would change a
+# model input, so turning one on invalidates the fitted models and requires a
+# retrain plus a note in FINDINGS saying which results used which version.
+cleaning:
+  version: v1-parity
+  coerce_numeric_text: true    # "$85,000" / "45.6%" -> numbers, as ingest does
+  align_categories: true       # map categories onto the training levels
+  unseen_category_to_other: false   # false = unseen level becomes missing + counted
+  rare_category_min_count: 0        # 0 = no rare-level pooling
+  clip_numeric: false               # false = nothing is clipped, only flagged
+  clip_quantiles: [0.001, 0.999]    # bounds used only if clip_numeric is true
+  range_quantiles: [0.005, 0.995]   # bounds for FLAGGING out-of-range values
+  drop_duplicate_ids: false         # false = duplicates counted and kept
+
+# Approve/reject policy for the Score Applicants dashboard. This is a POLICY
+# choice, not a model output: the survival model returns a probability.
+# reject_at_or_above 0.30 on the full model's test split declines 17.0% of
+# applicants, taking the approved population's observed default rate from
+# 11.8% to 8.9% (rejected: 25.9%). Shown on the dashboard and written into
+# every run_summary.csv.
+decision:
+  model_tag: full            # trained bundle used for scoring
+  model: discrete_hazard     # or cox
+  horizon_months: 36
+  reject_at_or_above: 0.30
+  explain_nsamples: 600      # ~2.7s per explained applicant
+  explain_n_background: 100
+  max_explained: 100         # rejected applicants explained per run
+  background_rows: 20000
+  background_above_mb: 25     # uploads >= this run in a background process
+  chunk_rows: 50000           # rows per block; peak memory follows this, not file size
+  drift_min_rows: 500         # below this, drift is reported as 'too few rows'
+  min_feature_coverage: 0.60

@@ -1,0 +1,116 @@
+{
+  "tag": "holdout_small_strat",
+  "n_boot": 500,
+  "reference": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E"
+  ],
+  "checks": {
+    "G": [
+      "annual_inc",
+      "mths_since_recent_inq"
+    ]
+  },
+  "checks_source": "command line",
+  "results": {
+    "G": [
+      {
+        "feature": "annual_inc",
+        "n_boot": 500,
+        "ci": 0.95,
+        "rank_target": 6.0,
+        "rank_target_lo": 2.0,
+        "rank_target_hi": 21.524999999999977,
+        "rank_reference": 2.0,
+        "rank_reference_lo": 2.0,
+        "rank_reference_hi": 6.0,
+        "rank_shift": 4.0,
+        "rank_shift_lo": -2.0,
+        "rank_shift_hi": 20.0,
+        "share_ratio": 0.6802221041594517,
+        "share_ratio_lo": 0.37737153354955977,
+        "share_ratio_hi": 1.229010427840229,
+        "reference_rank_range": "1-13",
+        "p_outside_reference_range": 0.208,
+        "shift_ci_excludes_zero": false,
+        "share_ci_excludes_one": false
+      },
+      {
+        "feature": "mths_since_recent_inq",
+        "n_boot": 500,
+        "ci": 0.95,
+        "rank_target": 15.0,
+        "rank_target_lo": 5.0,
+        "rank_target_hi": 37.0,
+        "rank_reference": 8.0,
+        "rank_reference_lo": 4.0,
+        "rank_reference_hi": 15.0,
+        "rank_shift": 7.0,
+        "rank_shift_lo": -5.0,
+        "rank_shift_hi": 30.0,
+        "share_ratio": 0.7166112439282681,
+        "share_ratio_lo": 0.4303634910377388,
+        "share_ratio_hi": 1.2554031925757418,
+        "reference_rank_range": "2-17",
+        "p_outside_reference_range": 0.272,
+        "shift_ci_excludes_zero": false,
+        "share_ci_excludes_one": false
+      }
+    ]
+  },
+  "provenance": {
+    "stage": "03b_bootstrap_segments",
+    "created_at": "2026-09-22T15:11:46+00:00",
+    "code": {
+      "commit": "afcd4a4d1522575304a232965983e210d333085d",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 2016,
+      "mtime": "2026-09-21T15:08:27+00:00",
+      "sha256": "ecac9fa925b9d12473bf8b35f05b9a5dc510abb4368852260374a66217ed14a6"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "tag": "holdout_small_strat",
+      "n_boot": 500,
+      "segment": "grade",
+      "overwrite": false,
+      "target": "G",
+      "features": [
+        "annual_inc",
+        "mths_since_recent_inq"
+      ],
+      "reference": null
+    },
+    "inputs": {
+      "per_borrower_importance": {
+        "path": "outputs/tables/03_per_borrower_importance_holdout_small_strat.parquet",
+        "exists": true,
+        "bytes": 84273,
+        "mtime": "2026-09-22T15:11:42+00:00",
+        "sha256": "fd773d1818b874b67246ee72e1a5323f7fc5f475d5c14876fe62a6da8fc8edca"
+      }
+    },
+    "outputs": {},
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+income_band,loans,events,default_rate,median_duration,small_segment
+<30k,135392,19120,0.1412,17.0,False
+30-50k,501732,70184,0.1399,18.0,False
+50-75k,695829,87501,0.1258,18.0,False
+75-100k,431207,47713,0.1106,17.0,False
+100-150k,335748,31522,0.0939,17.0,False
+150k+,157882,12553,0.0795,17.0,False

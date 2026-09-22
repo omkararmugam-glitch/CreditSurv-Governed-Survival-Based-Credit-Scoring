@@ -1,0 +1,358 @@
+{
+  "source": "outputs\\data\\dev_sample.parquet",
+  "tag": "holdout_small",
+  "n_rows": 200000,
+  "split_scheme": "out_of_time",
+  "oot_cutoff": 2016,
+  "train_years": [
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015
+  ],
+  "test_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "ipcw_fitted_on": "test",
+  "early_stopping": {
+    "validation": "random 10% of training loans",
+    "n_fit": 70527,
+    "n_val": 7836,
+    "trees": 127,
+    "best_iteration": 127
+  },
+  "data_source": "outputs/data/dev_sample.parquet",
+  "results_by_vintage": {
+    "cox": {
+      "2016": {
+        "model": "cox",
+        "split": "test_2016",
+        "n": 38481,
+        "event_rate": 0.1581,
+        "concordance": 0.6676,
+        "ibs": 0.112,
+        "auc_6m": 0.6721,
+        "auc_12m": 0.6782,
+        "auc_18m": 0.6807,
+        "auc_24m": 0.6809,
+        "auc_30m": 0.6781,
+        "auc_36m": 0.6499,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 34730,
+          "12": 29722,
+          "18": 24590,
+          "24": 19878,
+          "30": 11093,
+          "36": 938
+        }
+      },
+      "2017": {
+        "model": "cox",
+        "split": "test_2017",
+        "n": 39294,
+        "event_rate": 0.0896,
+        "concordance": 0.6642,
+        "ibs": 0.074,
+        "auc_6m": 0.6578,
+        "auc_12m": 0.6705,
+        "auc_18m": 0.6726,
+        "auc_24m": 0.6701,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 35172,
+          "12": 29852,
+          "18": 15806,
+          "24": 2618
+        }
+      },
+      "2018": {
+        "model": "cox",
+        "split": "test_2018",
+        "n": 43862,
+        "event_rate": 0.0165,
+        "concordance": 0.6743,
+        "ibs": 0.0217,
+        "auc_6m": 0.6794,
+        "auc_12m": 0.6931,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 26335,
+          "12": 4817
+        }
+      }
+    },
+    "discrete_hazard": {
+      "2016": {
+        "model": "discrete_hazard",
+        "split": "test_2016",
+        "n": 38481,
+        "event_rate": 0.1581,
+        "concordance": 0.6711,
+        "ibs": 0.1118,
+        "auc_6m": 0.6881,
+        "auc_12m": 0.6871,
+        "auc_18m": 0.6876,
+        "auc_24m": 0.6823,
+        "auc_30m": 0.6783,
+        "auc_36m": 0.6569,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 34730,
+          "12": 29722,
+          "18": 24590,
+          "24": 19878,
+          "30": 11093,
+          "36": 938
+        }
+      },
+      "2017": {
+        "model": "discrete_hazard",
+        "split": "test_2017",
+        "n": 39294,
+        "event_rate": 0.0896,
+        "concordance": 0.6677,
+        "ibs": 0.073,
+        "auc_6m": 0.6718,
+        "auc_12m": 0.677,
+        "auc_18m": 0.6794,
+        "auc_24m": 0.6778,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 35172,
+          "12": 29852,
+          "18": 15806,
+          "24": 2618
+        }
+      },
+      "2018": {
+        "model": "discrete_hazard",
+        "split": "test_2018",
+        "n": 43862,
+        "event_rate": 0.0165,
+        "concordance": 0.6951,
+        "ibs": 0.0208,
+        "auc_6m": 0.7006,
+        "auc_12m": 0.7071,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 26335,
+          "12": 4817
+        }
+      }
+    }
+  },
+  "time_bin_months": 3,
+  "negative_subsample": 0.4,
+  "with_lc_grade": false,
+  "n_train": 78363,
+  "n_test": 121637,
+  "eval_horizons": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "features": {
+    "numeric": [
+      "loan_amnt",
+      "installment",
+      "annual_inc",
+      "dti",
+      "open_acc",
+      "total_acc",
+      "revol_bal",
+      "revol_util",
+      "mort_acc",
+      "delinq_2yrs",
+      "inq_last_6mths",
+      "pub_rec",
+      "pub_rec_bankruptcies",
+      "tax_liens",
+      "acc_now_delinq",
+      "delinq_amnt",
+      "chargeoff_within_12_mths",
+      "collections_12_mths_ex_med",
+      "mths_since_last_delinq",
+      "mths_since_last_record",
+      "mths_since_last_major_derog",
+      "tot_coll_amt",
+      "tot_cur_bal",
+      "total_rev_hi_lim",
+      "acc_open_past_24mths",
+      "avg_cur_bal",
+      "bc_open_to_buy",
+      "bc_util",
+      "mo_sin_old_il_acct",
+      "mo_sin_old_rev_tl_op",
+      "mo_sin_rcnt_rev_tl_op",
+      "mo_sin_rcnt_tl",
+      "mths_since_recent_bc",
+      "mths_since_recent_bc_dlq",
+      "mths_since_recent_inq",
+      "mths_since_recent_revol_delinq",
+      "num_accts_ever_120_pd",
+      "num_actv_bc_tl",
+      "num_actv_rev_tl",
+      "num_bc_sats",
+      "num_bc_tl",
+      "num_il_tl",
+      "num_op_rev_tl",
+      "num_rev_accts",
+      "num_rev_tl_bal_gt_0",
+      "num_sats",
+      "num_tl_30dpd",
+      "num_tl_90g_dpd_24m",
+      "num_tl_op_past_12m",
+      "pct_tl_nvr_dlq",
+      "percent_bc_gt_75",
+      "tot_hi_cred_lim",
+      "total_bal_ex_mort",
+      "total_bc_limit",
+      "total_il_high_credit_limit"
+    ],
+    "categorical": [
+      "purpose",
+      "home_ownership",
+      "verification_status",
+      "addr_state",
+      "application_type",
+      "initial_list_status"
+    ]
+  },
+  "results": [
+    {
+      "model": "cox",
+      "split": "test",
+      "n": 121637,
+      "event_rate": 0.0849,
+      "concordance": 0.6734,
+      "ibs": 0.1007,
+      "auc_6m": 0.6695,
+      "auc_12m": 0.6741,
+      "auc_18m": 0.6722,
+      "auc_24m": 0.6654,
+      "auc_30m": 0.6615,
+      "auc_36m": 0.6329,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 96237,
+        "12": 64391,
+        "18": 40396,
+        "24": 22496,
+        "30": 11093,
+        "36": 938
+      }
+    },
+    {
+      "model": "discrete_hazard",
+      "split": "test",
+      "n": 121637,
+      "event_rate": 0.0849,
+      "concordance": 0.6762,
+      "ibs": 0.1006,
+      "auc_6m": 0.6851,
+      "auc_12m": 0.6827,
+      "auc_18m": 0.6804,
+      "auc_24m": 0.6692,
+      "auc_30m": 0.6636,
+      "auc_36m": 0.6425,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 96237,
+        "12": 64391,
+        "18": 40396,
+        "24": 22496,
+        "30": 11093,
+        "36": 938
+      }
+    }
+  ],
+  "provenance": {
+    "stage": "02_train_models",
+    "created_at": "2026-09-22T15:10:49+00:00",
+    "code": {
+      "commit": "afcd4a4d1522575304a232965983e210d333085d",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 2016,
+      "mtime": "2026-09-21T15:08:27+00:00",
+      "sha256": "ecac9fa925b9d12473bf8b35f05b9a5dc510abb4368852260374a66217ed14a6"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "full": false,
+      "with_lc_grade": false,
+      "split": "out_of_time",
+      "oot_cutoff": 2016,
+      "val_frac": 0.1,
+      "time_bin": 3,
+      "negative_subsample": 0.4,
+      "cox_max_rows": 300000,
+      "skip_cox": false,
+      "skip_gbm": false,
+      "tag": "holdout_small",
+      "overwrite": false
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/dev_sample.parquet",
+        "exists": true,
+        "bytes": 18169223,
+        "mtime": "2026-09-21T12:48:31+00:00",
+        "sha256": "a19de31b3c0452a456bffb46d76b1ae243a7cecdd24f9e29d58cf1cd38b3285a"
+      }
+    },
+    "outputs": {
+      "model": {
+        "path": "outputs/models/02_models_holdout_small.pkl",
+        "exists": true,
+        "bytes": 8477768,
+        "mtime": "2026-09-22T15:10:49+00:00",
+        "sha256": "3336429f1d303e38b0c49575f582e52c3a72e275b5914e6f72ce096cbc4eb688"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "applicant_id": "APP-000058",
+  "decision": "declined",
+  "notice_date": "2026-09-22",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.6120431120945434,
+  "horizon_months": 36,
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "loan_amnt",
+      "reason": "Amount of credit requested",
+      "attribution": -0.057233,
+      "feature_value": 25000.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "percent_bc_gt_75",
+      "reason": "Number of bankcard accounts near their credit limit",
+      "attribution": -0.01687,
+      "feature_value": 60.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "total_rev_hi_lim",
+      "reason": "Amount of revolving credit available",
+      "attribution": -0.009595,
+      "feature_value": 16400.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 4,
+      "feature": "inq_last_6mths",
+      "reason": "Number of recent inquiries on credit bureau report",
+      "attribution": -0.009102,
+      "feature_value": 1.0,
+      "direction_consistent": true
+    }
+  ],
+  "excluded_helpful_features": [
+    "dti",
+    "home_ownership",
+    "pct_tl_nvr_dlq",
+    "mo_sin_old_il_acct",
+    "acc_open_past_24mths"
+  ],
+  "fair_lending_flags": [
+    "addr_state"
+  ]
+}

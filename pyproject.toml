@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+ui = ["streamlit>=1.40", "psutil>=5.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

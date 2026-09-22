@@ -183,13 +183,17 @@ def build_stamp(
     }
 
 
-def verify_stamp(stamp: dict) -> list[dict]:
+def verify_stamp(stamp: dict, fingerprint=None) -> list[dict]:
     """Re-hash every file a stamp recorded and report what changed.
 
     Returns one row per recorded file: ``status`` is ``ok``, ``changed`` (the
     content hash differs -- the file was overwritten or edited), ``missing``, or
     ``was_missing`` (it was already absent when the stamp was written).
+
+    ``fingerprint`` may be passed to reuse hashes across many stamps that share an
+    input (the UI hashes a 166 MB file once per refresh, not once per result).
     """
+    fingerprint = fingerprint or file_fingerprint
     rows = []
     for kind in ("inputs", "outputs"):
         for name, fp in (stamp.get(kind) or {}).items():
@@ -200,7 +204,7 @@ def verify_stamp(stamp: dict) -> list[dict]:
             elif not path.exists():
                 status = "missing"
             else:
-                status = "ok" if file_fingerprint(path)["sha256"] == fp["sha256"] \
+                status = "ok" if fingerprint(path)["sha256"] == fp["sha256"] \
                     else "changed"
             rows.append({"kind": kind, "name": name, "path": fp["path"],
                          "status": status})

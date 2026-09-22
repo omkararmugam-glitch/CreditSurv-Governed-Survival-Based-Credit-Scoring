@@ -1,0 +1,53 @@
+{
+  "applicant_id": "APP-000015",
+  "decision": "declined",
+  "notice_date": "2026-09-22",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.2666685415470835,
+  "horizon_months": 36,
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "reason": "Number of accounts opened recently",
+      "attribution": -0.033392,
+      "feature_value": 6.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "loan_amnt",
+      "reason": "Amount of credit requested",
+      "attribution": -0.023161,
+      "feature_value": 25000.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "dti",
+      "reason": "Excessive obligations in relation to income",
+      "attribution": -0.007948,
+      "feature_value": 25.059999465942383,
+      "direction_consistent": true
+    },
+    {
+      "rank": 4,
+      "feature": "revol_util_missing",
+      "reason": "Proportion of available revolving credit currently in use",
+      "attribution": -0.006934,
+      "feature_value": 0,
+      "direction_consistent": false
+    }
+  ],
+  "excluded_helpful_features": [
+    "mo_sin_old_rev_tl_op",
+    "tot_hi_cred_lim",
+    "num_il_tl",
+    "annual_inc",
+    "mths_since_last_record"
+  ],
+  "fair_lending_flags": [
+    "addr_state"
+  ]
+}

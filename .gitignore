@@ -23,3 +23,10 @@ outputs/models/
 # NOTE: outputs/tables/ and outputs/figures/ are deliberately NOT ignored. They are
 # the evidence this project produced and are version-controlled, including their
 # CSV / Parquet / .npy files. Do not add global *.csv or *.parquet rules here.
+
+# Logs of runs started from the Streamlit UI (one folder per run, plus per-tag locks).
+outputs/logs/
+
+# Output sets from the Score Applicants dashboard (one folder per upload, each
+# holding a copy of the uploaded file). Never committed: uploads are user data.
+outputs/runs/

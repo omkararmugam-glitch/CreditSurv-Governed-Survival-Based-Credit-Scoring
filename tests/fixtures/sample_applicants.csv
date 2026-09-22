@@ -1,0 +1,26 @@
+applicant_id,loan_amnt,installment,annual_inc,dti,open_acc,revol_bal,revol_util,delinq_2yrs,inquiries_last_6m,loan_purpose,home_ownership,state,verification_status,pub_rec,total_acc,mort_acc,credit_score,emp_length_years
+APP-0001,5000,411.54,84315.0,26.99,5,39206.0,79.4,0,0,home_improvement,OWN,NY,Source Verified,0,12,1,751,1
+APP-0002,5000,281.07,70598.0,19.27,4,28745.0,67.6,1,2,debt_consolidation,MORTGAGE,TX,Source Verified,1,19,3,705,9
+APP-0003,28000,898.64,173077.0,31.15,15,7441.0,15.8,0,2,major_purchase,OWN,IL,Source Verified,0,26,0,616,0
+APP-0004,16000,786.84,172294.0,10.17,10,22573.0,46.6,0,4,debt_consolidation,RENT,TX,Not Verified,1,40,0,694,5
+APP-0005,20000,636.76,44905.0,13.4,11,3817.0,6.7,1,2,home_improvement,OWN,CA,Verified,0,18,3,748,4
+APP-0006,20000,925.9,86494.0,11.52,17,27611.0,79.0,1,2,car,MORTGAGE,IL,Verified,0,42,0,803,8
+APP-0007,20000,671.62,26929.0,35.28,15,10655.0,71.0,0,0,home_improvement,RENT,CA,Verified,0,16,3,801,6
+APP-0008,5000,1081.87,40466.0,34.05,19,2027.0,79.2,0,0,credit_card,MORTGAGE,IL,Verified,0,21,2,634,2
+APP-0009,16000,344.28,38550.0,14.24,5,5451.0,75.0,0,0,debt_consolidation,MORTGAGE,CA,Verified,0,42,3,652,5
+APP-0010,8000,676.04,63548.0,17.39,17,25120.0,27.7,0,2,credit_card,MORTGAGE,IL,Source Verified,1,34,1,702,6
+APP-0011,12000,609.44,49770.0,13.37,12,28773.0,77.8,2,4,home_improvement,RENT,NY,Verified,0,32,2,653,9
+APP-0012,35000,485.61,128139.0,27.63,2,14819.0,25.9,0,0,car,OWN,CA,Source Verified,1,19,0,633,5
+APP-0013,16000,712.02,67542.0,4.32,3,29062.0,15.2,0,1,car,OWN,IL,Source Verified,0,5,2,646,10
+APP-0014,5000,373.54,50899.0,5.23,9,16037.0,39.5,1,2,credit_card,RENT,NY,Not Verified,0,11,0,796,3
+APP-0015,16000,912.09,199091.0,16.33,14,6140.0,49.8,0,0,major_purchase,OWN,CA,Not Verified,0,17,1,748,10
+APP-0016,5000,973.97,79826.0,11.09,5,14390.0,29.4,0,0,major_purchase,MORTGAGE,FL,Not Verified,1,28,1,702,10
+APP-0017,28000,272.32,77553.0,30.89,12,17968.0,60.2,0,0,car,RENT,IL,Not Verified,0,39,0,716,8
+APP-0018,35000,593.72,122361.0,27.48,21,41095.0,59.8,1,0,home_improvement,MORTGAGE,CA,Source Verified,0,8,2,669,9
+APP-0019,35000,413.29,59353.0,21.01,4,5470.0,25.0,0,2,home_improvement,RENT,NY,Not Verified,0,7,1,715,5
+APP-0020,20000,228.96,172024.0,24.83,4,4152.0,61.8,0,4,home_improvement,MORTGAGE,IL,Source Verified,0,31,0,635,10
+APP-0021,35000,1001.15,29709.0,25.85,21,25399.0,36.3,0,0,car,RENT,CA,Source Verified,0,14,2,612,5
+APP-0022,12000,558.45,51592.0,28.77,6,43364.0,72.5,0,2,home_improvement,MORTGAGE,FL,Verified,1,37,0,724,6
+APP-0023,8000,290.31,38580.0,33.61,19,40854.0,29.9,1,2,debt_consolidation,RENT,NY,Source Verified,1,28,1,717,4
+APP-0024,16000,789.69,25301.0,7.94,9,31601.0,78.7,2,2,home_improvement,RENT,CA,Verified,0,41,1,683,6
+APP-0025,16000,342.11,182133.0,23.66,17,3284.0,41.9,1,2,car,OWN,TX,Verified,1,23,2,696,4

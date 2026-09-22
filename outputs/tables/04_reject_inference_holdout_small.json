@@ -1,0 +1,209 @@
+{
+  "tag": "holdout_small",
+  "n_accepted": 121637,
+  "n_rejected_sampled": 1000000,
+  "dti_clip": 100.0,
+  "diagnostic": {
+    "n_accepted": 121637,
+    "n_rejected": 1000000,
+    "separability_auc": 0.8899,
+    "top_selection_drivers": [
+      "emp_length_years",
+      "score",
+      "dti"
+    ],
+    "common_support_share": 0.7253,
+    "substantial_features": [
+      "score",
+      "emp_length_years"
+    ],
+    "notable_features": [
+      "loan_amnt",
+      "dti",
+      "score",
+      "emp_length_years"
+    ],
+    "bias_detected": true,
+    "support_adequate": true,
+    "gate_decision": "apply_correction",
+    "rationale": "Distortion present (separability AUC 0.890; substantial on ['score', 'emp_length_years']) AND common support is 72.5%, above the 5% floor. A reweighting correction is warranted and will be applied.",
+    "thresholds": {
+      "smd_notable": 0.1,
+      "smd_substantial": 0.25,
+      "ks_substantial": 0.2,
+      "rank_auc_notable": 0.55,
+      "rank_auc_substantial": 0.65,
+      "separability_auc_strong": 0.75,
+      "separability_auc_weak": 0.6,
+      "min_common_support": 0.05
+    },
+    "notes": [
+      "dti: graded 'partial' -- judged on rank AUC (0.443), not SMD (-0.468), because the accepted and rejected columns are different instruments and an SMD between them conflates scale with selection.",
+      "score: graded 'partial' -- judged on rank AUC (0.840), not SMD (1.311), because the accepted and rejected columns are different instruments and an SMD between them conflates scale with selection."
+    ],
+    "features": [
+      {
+        "feature": "loan_amnt",
+        "comparability": "good",
+        "n_accepted": 121637,
+        "n_rejected": 1000000,
+        "accepted_mean": 15244.487,
+        "rejected_mean": 13059.351,
+        "smd": 0.1753,
+        "rank_auc": 0.6085,
+        "ks": 0.2169,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "smd",
+        "verdict": "notable"
+      },
+      {
+        "feature": "dti",
+        "comparability": "partial",
+        "n_accepted": 121475,
+        "n_rejected": 1000000,
+        "accepted_mean": 19.037,
+        "rejected_mean": 29.074,
+        "smd": -0.4679,
+        "rank_auc": 0.4426,
+        "ks": 0.2381,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "rank_auc",
+        "verdict": "notable"
+      },
+      {
+        "feature": "score",
+        "comparability": "partial",
+        "n_accepted": 121637,
+        "n_rejected": 257261,
+        "accepted_mean": 700.915,
+        "rejected_mean": 633.142,
+        "smd": 1.3111,
+        "rank_auc": 0.8402,
+        "ks": 0.6754,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "rank_auc",
+        "verdict": "substantial"
+      },
+      {
+        "feature": "emp_length_years",
+        "comparability": "good",
+        "n_accepted": 112529,
+        "n_rejected": 961595,
+        "accepted_mean": 5.93,
+        "rejected_mean": 1.136,
+        "smd": 1.662,
+        "rank_auc": 0.8967,
+        "ks": 0.7644,
+        "ks_pvalue": "0.000e+00",
+        "primary_metric": "smd",
+        "verdict": "substantial"
+      }
+    ]
+  },
+  "correction_applied": false,
+  "correction_forced": false,
+  "model_tag": "holdout_small",
+  "accepted_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "rejected_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "n_rejected_available": 21339229,
+  "composition": {
+    "rejected_by_year": {
+      "2016": 223568,
+      "2017": 331772,
+      "2018": 444660
+    },
+    "rejected_score_coverage_by_year": {
+      "2016": 0.2125,
+      "2017": 0.5406,
+      "2018": 0.0684
+    },
+    "rejected_with_score_by_year": {
+      "2016": 47511,
+      "2017": 179342,
+      "2018": 30408
+    },
+    "accepted_by_year": {
+      "2016": 38481,
+      "2017": 39294,
+      "2018": 43862
+    }
+  },
+  "diagnostic_only": true,
+  "explanation_shift": {
+    "status": "not_run",
+    "reason": "--diagnostic-only: the correction branch was skipped. The gate decision was 'apply_correction', which is reported but not acted on."
+  },
+  "provenance": {
+    "stage": "04_reject_inference",
+    "created_at": "2026-09-22T15:11:56+00:00",
+    "code": {
+      "commit": "afcd4a4d1522575304a232965983e210d333085d",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 2016,
+      "mtime": "2026-09-21T15:08:27+00:00",
+      "sha256": "ecac9fa925b9d12473bf8b35f05b9a5dc510abb4368852260374a66217ed14a6"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "tag": "holdout_small",
+      "n_explain": 200,
+      "force_correction": false,
+      "dti_clip": 100.0,
+      "overwrite": false,
+      "model_tag": "holdout_small",
+      "accepted_years": "2016-2018",
+      "rejected_years": "2016-2018",
+      "diagnostic_only": true
+    },
+    "inputs": {
+      "accepted": {
+        "path": "outputs/data/dev_sample.parquet",
+        "exists": true,
+        "bytes": 18169223,
+        "mtime": "2026-09-21T12:48:31+00:00",
+        "sha256": "a19de31b3c0452a456bffb46d76b1ae243a7cecdd24f9e29d58cf1cd38b3285a"
+      },
+      "rejected": {
+        "path": "outputs/data/rejected_raw.parquet",
+        "exists": true,
+        "bytes": 191216896,
+        "mtime": "2026-09-21T12:46:21+00:00",
+        "sha256": "209838cb682600e7411457feb7e38d79b93cd4bcd17eee043082de73244a6488"
+      },
+      "model": {
+        "path": "outputs/models/02_models_holdout_small.pkl",
+        "exists": true,
+        "bytes": 8477768,
+        "mtime": "2026-09-22T15:10:49+00:00",
+        "sha256": "3336429f1d303e38b0c49575f582e52c3a72e275b5914e6f72ce096cbc4eb688"
+      }
+    },
+    "outputs": {},
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

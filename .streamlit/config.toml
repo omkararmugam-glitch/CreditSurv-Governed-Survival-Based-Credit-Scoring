@@ -1,0 +1,21 @@
+# Local-only: the app can launch pipeline runs, so it must not be reachable from
+# the network. Usage statistics are not sent.
+[server]
+address = "localhost"
+# Upload cap in MB (Streamlit's default is 200). The whole file is held in memory
+# as bytes and again as a DataFrame, so a 500 MB CSV needs several GB of RAM.
+maxUploadSize = 500
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+# One deliberate palette across every page: slate blue for interface accents,
+# green for approvals, red for declines (set per chart in app/views/_common.py).
+[theme]
+base = "light"
+primaryColor = "#2f5d8a"
+backgroundColor = "#fbfbfd"
+secondaryBackgroundColor = "#eef1f6"
+textColor = "#1c2430"
+font = "sans serif"

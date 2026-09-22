@@ -1,0 +1,51 @@
+{
+  "applicant_id": "APP-000090",
+  "decision": "declined",
+  "notice_date": "2026-09-22",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.7282149611055735,
+  "horizon_months": 36,
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "reason": "Number of accounts opened recently",
+      "attribution": -0.066401,
+      "feature_value": 8.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "revol_util",
+      "reason": "Proportion of available revolving credit currently in use",
+      "attribution": -0.047822,
+      "feature_value": 96.0999984741211,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "bc_util",
+      "reason": "Proportion of available bankcard credit currently in use",
+      "attribution": -0.043637,
+      "feature_value": 104.9000015258789,
+      "direction_consistent": true
+    },
+    {
+      "rank": 4,
+      "feature": "loan_amnt",
+      "reason": "Amount of credit requested",
+      "attribution": -0.030953,
+      "feature_value": 19800.0,
+      "direction_consistent": true
+    }
+  ],
+  "excluded_helpful_features": [
+    "addr_state",
+    "mths_since_last_major_derog",
+    "revol_bal",
+    "mths_since_last_delinq",
+    "mths_since_recent_bc_dlq"
+  ],
+  "fair_lending_flags": []
+}
