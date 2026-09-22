@@ -42,6 +42,7 @@ __all__ = [
     "ingest_accepted",
     "ingest_rejected",
     "stratified_sample",
+    "read_rejected_sample",
 ]
 
 
@@ -279,3 +280,51 @@ def stratified_sample(
         take = int(min(quota.get(key, 1), len(group)))
         parts.append(group.sample(n=take, random_state=int(rng.integers(1 << 31))))
     return pd.concat(parts).sample(frac=1.0, random_state=seed)
+
+
+def read_rejected_sample(
+    path: str | Path,
+    columns: list[str],
+    *,
+    years: list[int] | None = None,
+    n: int | None = None,
+    seed: int = 20260921,
+) -> tuple[pd.DataFrame, int]:
+    """Read a random sample of rejected applications, optionally for given years.
+
+    The year filter is pushed down into the Parquet read -- ``application_d`` is an
+    ISO ``YYYY-MM-DD`` string, so a lexicographic range is exact -- and sampling
+    happens on the Arrow table before conversion. The file is 27.6M rows; loading
+    it whole into pandas string columns needs several GB, which this machine
+    does not have spare.
+
+    Returns ``(sample, n_available)`` where ``n_available`` is the row count after
+    the year filter and before sampling.
+
+    Limitation: the pushed-down range assumes year-first dates. A month-first
+    value such as ``03/15/2017`` falls outside it and is silently excluded rather
+    than flagged. The real file is ISO throughout -- the 2016-2018 filter returns
+    exactly the 21,339,229 rows the ingest counted for those years -- but a
+    different extract should be re-checked the same way.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    cols = list(dict.fromkeys([*columns, "application_d"])) if years else list(columns)
+    filters = None
+    if years:
+        filters = [("application_d", ">=", f"{min(years)}-01-01"),
+                   ("application_d", "<", f"{max(years) + 1}-01-01")]
+    table = pq.read_table(path, columns=cols, filters=filters)
+    n_available = table.num_rows
+    if n is not None and table.num_rows > n:
+        rng = np.random.default_rng(seed)
+        take = np.sort(rng.choice(table.num_rows, n, replace=False))
+        table = table.take(pa.array(take))
+    out = table.to_pandas()
+    if years:
+        got = pd.to_numeric(out["application_d"].astype(str).str[:4], errors="coerce")
+        if not got.dropna().isin(years).all():
+            raise ValueError("year filter admitted rows outside the requested years; "
+                             "application_d is not in ISO YYYY-MM-DD form")
+    return out, n_available

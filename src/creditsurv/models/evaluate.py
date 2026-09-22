@@ -45,12 +45,22 @@ A weight of 1/G can reach 1000x at this floor. Any horizon where the floor binds
 for a meaningful share of observations is reported as unreliable.
 """
 
+HIGH_VARIANCE_G = 0.05
+"""G(t) below which a horizon is reported as high-variance (weights above 20x)."""
+
 
 class CensoringModel:
     """Kaplan-Meier estimate of the censoring distribution ``G(t) = P(C > t)``.
 
-    Fitted on the **training** split and applied to test data, so that the
-    weights do not peek at the test outcomes.
+    Which sample to fit it on depends on the split. On a random split, train and
+    test share one censoring distribution, so fitting on train is correct and keeps
+    the test set untouched. On an **out-of-time** split they do not: 6% of
+    2007-2015 loans are still performing at extraction versus 60% of 2016-2018
+    loans, and train-fitted weights would under-weight holdout cases by 1.5x at 12
+    months and 23x at 36. There the model is fitted on the evaluation sample,
+    which is standard for Uno-type estimators. It uses only follow-up times and
+    the censoring indicator, never model predictions, so it leaks nothing into
+    the model being evaluated.
     """
 
     def __init__(self, duration: np.ndarray, event: np.ndarray, g_floor: float = _G_FLOOR):
@@ -138,7 +148,7 @@ def cumulative_dynamic_auc(
         n_case, n_ctrl = int(is_case.sum()), int(is_ctrl.sum())
 
         if n_case == 0 or n_ctrl == 0:
-            rows.append((t, np.nan, n_case, n_ctrl, False))
+            rows.append((t, np.nan, n_case, n_ctrl, False, float(g_at_t[k])))
             continue
 
         # Risk at horizon t is 1 - S(t), so higher = worse.
@@ -153,10 +163,13 @@ def cumulative_dynamic_auc(
         concordant = n_lower + 0.5 * n_equal
 
         auc = float(np.sum(w_case * concordant) / (np.sum(w_case) * n_ctrl))
-        rows.append((t, auc, n_case, n_ctrl, not bool(floor_binds[k])))
+        rows.append((t, auc, n_case, n_ctrl, not bool(floor_binds[k]), float(g_at_t[k])))
 
+    # g_at_t is reported because the floor alone is too permissive: G(t) = 0.01
+    # clears a 1e-3 floor yet gives controls 100x weights, so a single horizon can
+    # rest on a handful of heavily-weighted loans without being flagged.
     return pd.DataFrame(
-        rows, columns=["time", "auc", "n_cases", "n_controls", "reliable"]
+        rows, columns=["time", "auc", "n_cases", "n_controls", "reliable", "g_at_t"]
     )
 
 
@@ -285,6 +298,16 @@ class EvaluationResult:
             "unreliable_horizons": [
                 int(r.time) for r in self.auc_table.itertuples() if not r.reliable
             ],
+            # Horizons where fewer than 5% of loans are still under observation,
+            # so inverse-probability weights exceed 20x and the estimate is
+            # high-variance even though the floor did not bind.
+            "high_variance_horizons": [
+                int(r.time) for r in self.auc_table.itertuples()
+                if getattr(r, "g_at_t", 1.0) < HIGH_VARIANCE_G
+            ],
+            "n_controls_by_horizon": {
+                int(r.time): int(r.n_controls) for r in self.auc_table.itertuples()
+            },
         }
 
     def __str__(self) -> str:

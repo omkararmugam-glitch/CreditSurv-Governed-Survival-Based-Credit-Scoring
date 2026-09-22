@@ -34,6 +34,7 @@ from creditsurv.explain.naive_shap import explain_naive_shap  # noqa: E402
 from creditsurv.explain.segments import analyse_segment_stability  # noqa: E402
 from creditsurv.explain.survshap import check_efficiency, explain_survshap  # noqa: E402
 from creditsurv.features.build import add_derived_features, build_design_matrix  # noqa: E402
+from creditsurv.pipeline import resolve_data_source  # noqa: E402
 from creditsurv.provenance import (  # noqa: E402
     build_stamp,
     find_existing_outputs,
@@ -106,8 +107,15 @@ def main() -> int:
         return 2
     model = artefacts[args.model]
 
-    src = (cfg.paths.labeled_parquet if model_tag.startswith("full")
-           else cfg.paths.dev_sample_parquet)
+    # The data file comes from the model bundle, not from the tag's spelling. The
+    # old tag rule would have sent --tag holdout to the 200k dev sample and matched
+    # its row numbers against holdout loan IDs, silently selecting arbitrary loans.
+    try:
+        src = resolve_data_source(bundle, cfg, model_tag)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print(f"data source (from model bundle): {src}")
     df = pd.read_parquet(src)
     for col in [c for c in df.columns if df[c].dtype == object and c != "id"]:
         df[col] = df[col].astype("category")

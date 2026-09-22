@@ -42,7 +42,20 @@ def main() -> int:
     ap.add_argument("--segment", default="grade")
     ap.add_argument("--overwrite", action="store_true",
                     help="allow replacing an existing bootstrap result for this --tag")
+    ap.add_argument("--target", default=None,
+                    help="test only this segment level (e.g. G) against the reference; "
+                         "use with --features for a pre-registered test")
+    ap.add_argument("--features", nargs="+", default=None,
+                    help="features to test for --target; default is the built-in "
+                         "exploratory CHECKS list")
+    ap.add_argument("--reference", nargs="+", default=None,
+                    help=f"reference levels, default {'+'.join(REFERENCE)}")
     args = ap.parse_args()
+    if bool(args.target) != bool(args.features):
+        print("ERROR: --target and --features must be given together.", file=sys.stderr)
+        return 2
+    checks = {args.target: list(args.features)} if args.target else CHECKS
+    reference = list(args.reference) if args.reference else REFERENCE
 
     cfg = load_config(args.config)
     out_path = cfg.paths.tables_dir / f"03_segment_bootstrap_{args.tag}.json"
@@ -65,14 +78,14 @@ def main() -> int:
           f"per-level counts {seg.value_counts().sort_index().to_dict()}")
 
     results = {}
-    for target, features in CHECKS.items():
+    for target, features in checks.items():
         if target not in set(seg):
             continue
         out = bootstrap_segment_ranks(
-            df[feats], seg, target=target, reference_levels=REFERENCE,
+            df[feats], seg, target=target, reference_levels=reference,
             features=features, n_boot=args.n_boot, seed=cfg.explain.seed,
         )
-        print(f"\n=== grade {target} vs pooled {'+'.join(REFERENCE)} "
+        print(f"\n=== grade {target} vs pooled {'+'.join(reference)} "
               f"({args.n_boot} stratified bootstrap replicates, 95% CI) ===")
         view = out[["feature", "rank_target", "rank_target_lo", "rank_target_hi",
                     "rank_reference", "rank_shift", "rank_shift_lo", "rank_shift_hi",
@@ -82,7 +95,9 @@ def main() -> int:
         print(to_markdown(view, floatfmt="{:.2f}"))
         results[target] = out.to_dict(orient="records")
 
-    write_json({"tag": args.tag, "n_boot": args.n_boot, "reference": REFERENCE,
+    write_json({"tag": args.tag, "n_boot": args.n_boot, "reference": reference,
+                "checks": checks,
+                "checks_source": "command line" if args.target else "built-in CHECKS",
                 "results": results,
                 "provenance": build_stamp(stage="03b_bootstrap_segments",
                                           inputs={"per_borrower_importance": path},

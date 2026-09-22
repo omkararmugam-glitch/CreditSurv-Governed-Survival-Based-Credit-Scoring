@@ -44,6 +44,7 @@ __all__ = [
     "compare_explanations",
     "time_variation_share",
     "top_k_overlap",
+    "coalition_noise_floor",
 ]
 
 
@@ -222,3 +223,51 @@ def compare_explanations(
         n_observations=surv.n_observations,
         at_month=naive.at_month,
     )
+
+
+def coalition_noise_floor(
+    model,
+    X: pd.DataFrame,
+    background: pd.DataFrame,
+    times: np.ndarray,
+    *,
+    nsamples: int,
+    n_background: int,
+    seed: int = 20260921,
+    draw_seeds: tuple[int, int] = (101, 202),
+) -> dict:
+    """How much SurvSHAP(t) disagrees with *itself* from coalition sampling alone.
+
+    Explains the same borrowers twice with the same background, varying only the
+    KernelSHAP coalition draw, and compares the two importance rankings. This is
+    the resolution of the instrument: a method-vs-method agreement that exceeds it
+    cannot be distinguished from no difference at all. It is model-specific, so a
+    floor measured on one model does not carry over to another.
+    """
+    from scipy.stats import spearmanr
+
+    from .survshap import explain_survshap
+
+    imps = []
+    for ds in draw_seeds:
+        np.random.seed(ds)       # shap samples coalitions from numpy's global RNG
+        expl = explain_survshap(model, X, background, times, nsamples=nsamples,
+                                n_background=n_background, seed=seed)
+        imps.append(expl.importance())
+    a, b = imps
+    feats = list(a.index)
+    va, vb = a.reindex(feats).to_numpy(), b.reindex(feats).to_numpy()
+    rho = spearmanr(va, vb).statistic
+    scale = float(np.mean([va.mean(), vb.mean()]))
+    return {
+        "nsamples": int(max(nsamples, 2 * len(X.columns))),
+        "n_explained": int(len(X)),
+        "draw_seeds": list(draw_seeds),
+        # Spearman is undefined when an importance vector is constant. That is
+        # perfect agreement only if the two draws are actually identical.
+        "spearman_between_draws": (float(rho) if np.isfinite(rho)
+                                   else (1.0 if np.allclose(va, vb) else 0.0)),
+        "top5_jaccard": top_k_overlap(a, b, 5),
+        "top10_jaccard": top_k_overlap(a, b, 10),
+        "mean_rel_disagreement": float(np.mean(np.abs(va - vb)) / scale) if scale > 0 else 0.0,
+    }

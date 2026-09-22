@@ -1,4 +1,8 @@
-"""Stage 5 -- assemble FINDINGS.md sections 2-5 from the JSON written by 02-04.
+"""Stage 5 -- assemble FINDINGS.md sections 2-6 from the JSON written by 02-04.
+
+Sections 2-5 hold the primary random-split results (``--tag``); section 6 holds
+the out-of-time holdout (``--holdout-tag``). An out-of-time run is refused as
+``--tag``, since rendering it into 2-5 would replace the primary results.
 
 Reads whatever result files exist and regenerates the corresponding FINDINGS.md
 sections in place. Stages that have not been run are reported as not run rather
@@ -29,8 +33,10 @@ SECTION_MARKERS = {
     "2": ("## 2. Survival models", "## 3. Explainability"),
     "3": ("## 3. Explainability", "## 4. Reject inference (diagnostic-gated)"),
     "4": ("## 4. Reject inference (diagnostic-gated)", "## 5. Summary"),
-    "5": ("## 5. Summary", None),
+    "5": ("## 5. Summary", "## 6. Out-of-time holdout"),
+    "6": ("## 6. Out-of-time holdout", None),
 }
+SECTIONS = ("2", "3", "4", "5", "6")
 
 
 def _load(path: Path):
@@ -702,6 +708,245 @@ def section_5(s2, s3, s4, s3_strat=None, cfg_tables=None, tag: str = "dev") -> s
     return "\n".join(out)
 
 
+HOLDOUT_HEADING = "## 6. Out-of-time holdout"
+
+
+def _auc_cells(summary: dict, horizons: list[int]) -> list[str]:
+    return [_fmt(summary.get(f"auc_{h}m")) for h in horizons]
+
+
+def section_6(tables_dir, holdout_tag: str = "holdout",
+              strat_tag: str = "holdout_strat", full_tag: str = "full") -> str:
+    """Out-of-time holdout results, rendered alongside -- never instead of -- §2-§5.
+
+    Every decision rule applied here was pre-registered in the protected block at
+    the top of this section before the holdout was run. The renderer applies those
+    rules mechanically; it does not choose them.
+    """
+    t = tables_dir
+    s2 = _load(t / f"02_metrics_{holdout_tag}.json")
+    s2_full = _load(t / f"02_metrics_{full_tag}.json")
+    nf = _load(t / f"03c_noise_floor_{holdout_tag}.json")
+    s3 = _load(t / f"03_explain_{holdout_tag}.json")
+    s3s = _load(t / f"03_explain_{strat_tag}.json")
+    boot = _load(t / f"03_segment_bootstrap_{strat_tag}.json")
+    boot_orig = _load(t / f"03_segment_bootstrap_{full_tag}_strat.json")
+    s4 = _load(t / f"04_reject_inference_{holdout_tag}.json")
+    s4_full = _load(t / f"04_reject_inference_{full_tag}.json")
+
+    out = [HOLDOUT_HEADING, ""]
+    if not any([s2, nf, s3, s3s, boot, s4]):
+        out += ["*Not run yet.* The pre-registered decision rules above were fixed "
+                "before any holdout result existed.", ""]
+        return "\n".join(out)
+
+    # ---------------- 6.1 design ----------------
+    if s2:
+        ty, hy = s2.get("train_years", []), s2.get("test_years", [])
+        es = s2.get("early_stopping") or {}
+        out += [
+            "### 6.1 Design", "",
+            f"Models refitted on **{ty[0]}-{ty[-1]}** vintages only "
+            f"({s2['n_train']:,} loans) and evaluated on **{hy[0]}-{hy[-1]}** "
+            f"({s2['n_test']:,} loans), which no part of the fit saw. Early stopping "
+            f"validated on {es.get('validation', 'n/a')} "
+            f"({_fmt(es.get('n_val'))} loans; {es.get('trees', 'n/a')} trees kept). "
+            f"The censoring model behind the IPCW weights was fitted on the "
+            f"**{s2.get('ipcw_fitted_on', 'n/a')}** set, because training-period and "
+            f"holdout censoring differ sharply (6% vs 60% still performing).",
+            "",
+            "Two limits apply to everything below. Horizons of 30 and 36 months are "
+            "reachable only by 2016 loans (data extracted early 2019), so those "
+            "columns are 2016-only results, not 2016-2018. And items 6.3-6.4 change "
+            "the model and the borrowers at once, so a result that fails to "
+            "replicate cannot be attributed to either alone.",
+            "",
+        ]
+
+        # ---------------- 6.2 performance ----------------
+        results = s2.get("results", [])
+        if results:
+            horizons = sorted(int(k[4:-1]) for k in results[0] if k.startswith("auc_"))
+            head = ["Model", "C-index", "IBS"] + [f"AUC {h}m" for h in horizons] + \
+                   ["High-variance horizons"]
+            out += ["### 6.2 Survival models on the holdout", "",
+                    "| " + " | ".join(head) + " |",
+                    "|" + "|".join("---" for _ in head) + "|"]
+            for r in results:
+                hv = r.get("high_variance_horizons") or []
+                out.append("| " + " | ".join(
+                    [r["model"], _fmt(r["concordance"]), _fmt(r["ibs"])]
+                    + _auc_cells(r, horizons) + [str(hv) if hv else "none"]) + " |")
+            out.append("")
+            ctrl = results[0].get("n_controls_by_horizon") or {}
+            if ctrl:
+                out += ["Loans still under observation at each horizon (the AUC "
+                        "controls): " + ", ".join(
+                            f"{h}m {int(v):,}" for h, v in sorted(
+                                ((int(k), v) for k, v in ctrl.items()))) + ".", ""]
+
+            byv = s2.get("results_by_vintage") or {}
+            if byv:
+                out += ["By holdout vintage (each with its own censoring model, "
+                        "horizons limited to what that vintage can reach):", "",
+                        "| Model | Vintage | n | C-index | AUC 6m | AUC 12m | AUC 24m |",
+                        "|---|---|---|---|---|---|---|"]
+                for model, years in byv.items():
+                    for y, r in sorted(years.items()):
+                        out.append(
+                            f"| {model} | {y} | {_fmt(r.get('n'))} | "
+                            f"{_fmt(r.get('concordance'))} | {_fmt(r.get('auc_6m'))} | "
+                            f"{_fmt(r.get('auc_12m'))} | {_fmt(r.get('auc_24m'))} |")
+                out.append("")
+            if s2_full and s2_full.get("results"):
+                ref = ", ".join(f"{r['model']} {_fmt(r['concordance'])}"
+                                for r in s2_full["results"])
+                out += [f"For reference only, the random-split test (section 2) gave "
+                        f"C-index {ref}. The two are **not like-for-like**: that model "
+                        f"trained on all vintages and was tested on loans from the "
+                        f"same years, and its test loans are much less censored.", ""]
+
+    # ---------------- 6.3 naive vs SurvSHAP(t) ----------------
+    cmp = (s3 or {}).get("naive_vs_survshap") or {}
+    if cmp and "spearman" in cmp:
+        floor = (nf or {}).get("spearman_between_draws")
+        rho = cmp.get("spearman")
+        top5 = cmp.get("top5_overlap")
+        flips = cmp.get("top5_sign_disagreements") or []
+        out += ["### 6.3 Naive SHAP vs SurvSHAP(t) on the holdout", "",
+                "| Measure | Holdout | Section 3 (random split) |", "|---|---|---|"]
+        orig = {}
+        s3_full = _load(t / f"03_explain_{full_tag}.json")
+        if s3_full:
+            orig = s3_full.get("naive_vs_survshap") or {}
+        for label, key in (("Spearman (all features)", "spearman"),
+                           ("Top-5 overlap", "top5_overlap"),
+                           ("Top-10 overlap", "top10_overlap"),
+                           ("Sign agreement", "sign_agreement")):
+            out.append(f"| {label} | {_fmt(cmp.get(key))} | {_fmt(orig.get(key))} |")
+        out.append(f"| Top-5 sign disagreements | {flips or 'none'} | "
+                   f"{orig.get('top5_sign_disagreements') or 'none'} |")
+        out.append(f"| Between-draw noise floor (this model) | "
+                   f"{_fmt(floor) if floor is not None else 'not measured'} | "
+                   f"{_fmt(_section3_floor(t, (s3_full or {}).get('nsamples')))} |")
+        out.append("")
+        if floor is None:
+            out += ["**Criterion (i) cannot be evaluated**: the noise floor was not "
+                    "measured on the holdout model (`03c_noise_floor.py`). The floor "
+                    "from section 3 belongs to a different model and is not used.", ""]
+        else:
+            c1 = rho >= floor
+            c2 = (top5 == 1.0) and not flips
+            out += [
+                "Pre-registered criteria, applied as written:", "",
+                f"- **(i) ranking level** -- method agreement rho {rho:.4f} "
+                f"{'>=' if c1 else '<'} this model's noise floor {floor:.3f}: "
+                f"**{'HOLDS' if c1 else 'DOES NOT HOLD'}**.",
+                f"- **(ii) notice level** -- top-5 identical ({_fmt(top5)}) with no "
+                f"top-5 sign disagreement: **{'HOLDS' if c2 else 'DOES NOT HOLD'}**.",
+                "",
+            ]
+            if c1 and c2:
+                out += ["The section 3 finding replicates on the holdout: the two "
+                        "methods are indistinguishable at the resolution of the "
+                        "instrument, and name the same reasons.", ""]
+            elif c1:
+                out += ["The ranking-level finding replicates, but the notice-level "
+                        "one does not: overall rankings agree within noise, yet the "
+                        "top-5 reasons differ. That is the part an applicant sees.", ""]
+            else:
+                out += ["The finding does **not** replicate on the holdout: the two "
+                        "methods disagree by more than the explanation's own sampling "
+                        "noise. Because the model and the borrowers both changed, "
+                        "this run cannot say which change is responsible.", ""]
+
+    # ---------------- 6.4 grade G, pre-registered ----------------
+    if boot:
+        g_rows = {r["feature"]: r for r in (boot.get("results") or {}).get("G", [])}
+        orig_rows = {r["feature"]: r
+                     for r in ((boot_orig or {}).get("results") or {}).get("G", [])}
+        counts = (s3s or {}).get("strata_counts", {})
+        out += ["### 6.4 Grade G attribution shares (pre-registered test)", "",
+                f"{(s3s or {}).get('n_explained', 'n/a')} holdout borrowers, equal "
+                f"allocation per grade ({counts}); {_fmt(boot.get('n_boot'))} "
+                f"stratified bootstrap replicates; reference "
+                f"{'+'.join(boot.get('reference', []))}. Efficiency residual "
+                f"{(s3s or {}).get('efficiency_worst_residual', float('nan')):.1e}.", "",
+                "| Feature | Share ratio G / A-E [95% CI], holdout | Same, section 3 | "
+                "Pre-registered rule | Result |", "|---|---|---|---|---|"]
+        rules = {
+            "annual_inc": ("CI entirely below 1", lambda r: r["share_ratio_hi"] < 1,
+                           "CONFIRMED", "NOT REPLICATED"),
+            "mths_since_recent_inq": ("CI entirely above 1 (re-test)",
+                                      lambda r: r["share_ratio_lo"] > 1,
+                                      "REPLICATED", "NOT REPLICATED"),
+        }
+        for feat, (rule, test, yes, no) in rules.items():
+            r = g_rows.get(feat)
+            o = orig_rows.get(feat)
+            cell_o = (f"{o['share_ratio']:.2f} [{o['share_ratio_lo']:.2f}, "
+                      f"{o['share_ratio_hi']:.2f}]") if o else "n/a"
+            if r is None:
+                out.append(f"| `{feat}` | not tested | {cell_o} | {rule} | "
+                           f"**NOT RUN** |")
+                continue
+            out.append(f"| `{feat}` | {r['share_ratio']:.2f} "
+                       f"[{r['share_ratio_lo']:.2f}, {r['share_ratio_hi']:.2f}] | "
+                       f"{cell_o} | {rule} | **{yes if test(r) else no}** |")
+        out += ["", "The rules were fixed before the holdout was run and are applied "
+                "mechanically. Unlike the section 3 intervals, these are not subject "
+                "to post-hoc selection: the features were named in advance. "
+                "Coalition-sampling noise is still not included in the intervals.", ""]
+
+    # ---------------- 6.5 selection bias ----------------
+    if s4:
+        d = s4.get("diagnostic", {})
+        comp = s4.get("composition", {})
+        full_feats = {f["feature"]: f for f in
+                      ((s4_full or {}).get("diagnostic") or {}).get("features", [])}
+        out += ["### 6.5 Selection-bias diagnostic on the holdout period", "",
+                f"{s4.get('n_accepted', 0):,} accepted loans issued "
+                f"{s4.get('accepted_years')} against {s4.get('n_rejected_sampled', 0):,} "
+                f"rejected applications sampled from "
+                f"{s4.get('n_rejected_available', 0):,} made in "
+                f"{s4.get('rejected_years')}.", "",
+                "| Feature | Comparability | SMD | Rank AUC | Verdict, holdout | "
+                "Verdict, full period |", "|---|---|---|---|---|---|"]
+        for f in d.get("features", []):
+            ff = full_feats.get(f["feature"], {})
+            out.append(f"| `{f['feature']}` | {f['comparability']} | {f['smd']} | "
+                       f"{f['rank_auc']} | {f['verdict']} | {ff.get('verdict', 'n/a')} |")
+        out += ["", f"Separability AUC {_fmt(d.get('separability_auc'))}, common "
+                f"support {_fmt(d.get('common_support_share'))}, gate decision "
+                f"`{d.get('gate_decision')}` -- reported, not acted on "
+                f"(`--diagnostic-only`).", ""]
+        cov = comp.get("rejected_score_coverage_by_year", {})
+        with_score = comp.get("rejected_with_score_by_year", {})
+        if with_score:
+            total = sum(with_score.values()) or 1
+            parts = ", ".join(f"{y}: {cov.get(y, 0):.0%} coverage, "
+                              f"{with_score[y] / total:.0%} of scored rows"
+                              for y in sorted(with_score))
+            out += [f"**The score comparison is not balanced across years.** "
+                    f"Rejected-applicant score coverage and share of the scored "
+                    f"sample by year -- {parts}. The accepted side is spread evenly "
+                    f"({comp.get('accepted_by_year')}). Employment length is fully "
+                    f"covered and is not affected.", ""]
+    return "\n".join(out)
+
+
+def _section3_floor(t, nsamples):
+    """Between-draw Spearman from the section 3 sweep, at the nsamples used there."""
+    import pandas as pd
+
+    path = t / "03_nsamples_study.csv"
+    if nsamples is None or not path.exists():
+        return None
+    study = pd.read_csv(path)
+    row = study.loc[study["nsamples"] == int(nsamples), "spearman_between_draws"]
+    return float(row.iloc[0]) if len(row) else None
+
+
 KEEP_RE = re.compile(r"<!-- keep:([\w-]+) -->.*?<!-- /keep:\1 -->", re.S)
 
 
@@ -760,6 +1005,9 @@ def main() -> int:
     ap.add_argument("--tag", default="dev")
     ap.add_argument("--findings", default="FINDINGS.md")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--holdout-tag", default="holdout",
+                    help="tag of the out-of-time results rendered into section 6")
+    ap.add_argument("--holdout-strat-tag", default="holdout_strat")
     ap.add_argument("--force", action="store_true",
                     help="overwrite sections edited by hand since the last "
                          "generation (a backup is written first)")
@@ -770,6 +1018,14 @@ def main() -> int:
     s2 = _load(t / f"02_metrics_{args.tag}.json")
     s3 = _load(t / f"03_explain_{args.tag}.json")
     s4 = _load(t / f"04_reject_inference_{args.tag}.json")
+    if s2 and s2.get("split_scheme") == "out_of_time":
+        # Sections 2-5 are the primary random-split results. Rendering an
+        # out-of-time run into them would silently replace those results; the
+        # overwrite guard would not catch it, because nothing was edited by hand.
+        print(f"ERROR: --tag {args.tag} is an out-of-time run. Sections 2-5 hold the "
+              f"primary results; out-of-time results render in section 6 via "
+              f"--holdout-tag. Run with --tag full.", file=sys.stderr)
+        return 2
 
     print(f"stage 2 metrics : {'found' if s2 else 'NOT RUN'}")
     print(f"stage 3 explain : {'found' if s3 else 'NOT RUN'}")
@@ -781,10 +1037,11 @@ def main() -> int:
         "4": section_4(s4),
         "5": section_5(s2, s3, s4, _load(t / f"03_explain_{args.tag}_strat.json"),
                        t, args.tag),
+        "6": section_6(t, args.holdout_tag, args.holdout_strat_tag, args.tag),
     }
 
     if args.dry_run:
-        for key in ("2", "3", "4", "5"):
+        for key in SECTIONS:
             print("\n" + "=" * 74)
             print(bodies[key])
         return 0
@@ -794,6 +1051,10 @@ def main() -> int:
         print(f"ERROR: {path} not found", file=sys.stderr)
         return 2
     text = path.read_text(encoding="utf-8")
+    if HOLDOUT_HEADING not in text:
+        # Created once, at the end, so section 5 gains a closing marker. This does
+        # not change section 5's content, so its recorded hash still matches.
+        text = text.rstrip() + "\n\n" + HOLDOUT_HEADING + "\n\n*Not run yet.*\n"
 
     # Detect hand edits. Each generated section's hash (keep blocks excluded) is
     # recorded at write time; a section whose current hash differs was edited by
@@ -802,7 +1063,7 @@ def main() -> int:
     all_state = _load(state_path) or {}
     doc_key = str(path.resolve())
     state = all_state.get(doc_key, {})
-    edited = [key for key in ("2", "3", "4", "5")
+    edited = [key for key in SECTIONS
               if key in state
               and state[key] != _digest(text[slice(*_bounds(text, *SECTION_MARKERS[key]))])]
     if edited and not args.force:
@@ -821,15 +1082,15 @@ def main() -> int:
     backup = backup_dir / f"FINDINGS_{datetime.now():%Y%m%d_%H%M%S}.md"
     backup.write_text(text, encoding="utf-8")
 
-    for key in ("2", "3", "4", "5"):
+    for key in SECTIONS:
         start, end = SECTION_MARKERS[key]
         text = replace_section(text, start, end, bodies[key])
     new_state = {key: _digest(text[slice(*_bounds(text, *SECTION_MARKERS[key]))])
-                 for key in ("2", "3", "4", "5")}
+                 for key in SECTIONS}
     path.write_text(text, encoding="utf-8")
     all_state[doc_key] = new_state
     state_path.write_text(json.dumps(all_state, indent=2), encoding="utf-8")
-    print(f"\nFINDINGS.md sections 2-5 rewritten ({len(text.splitlines())} lines "
+    print(f"\nFINDINGS.md sections 2-6 rewritten ({len(text.splitlines())} lines "
           f"total); previous version backed up to {backup}")
     return 0
 

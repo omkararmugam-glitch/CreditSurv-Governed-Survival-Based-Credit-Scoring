@@ -35,6 +35,7 @@ __all__ = [
     "add_derived_features",
     "build_design_matrix",
     "train_test_split_loans",
+    "validation_split",
 ]
 
 
@@ -332,3 +333,23 @@ def train_test_split_loans(
     n_test = int(round(n * test_size))
     test_pos, train_pos = perm[:n_test], perm[n_test:]
     return df.index[np.sort(train_pos)], df.index[np.sort(test_pos)]
+
+
+def validation_split(
+    train_idx: pd.Index, *, frac: float = 0.1, seed: int = 20260921
+) -> tuple[pd.Index, pd.Index]:
+    """Carve an early-stopping validation set out of the TRAINING loans.
+
+    Early stopping chooses how many trees the model keeps, which is a fitted
+    quantity. Monitoring the test set for it lets test data shape the model. On
+    the random split that turned out to be inert -- training ran to the 600-tree
+    cap -- but on an out-of-time split it would let the holdout period choose the
+    model's size, undermining the claim that the holdout is unseen.
+    """
+    if not 0.0 < frac < 1.0:
+        raise ValueError("frac must be in (0, 1)")
+    rng = np.random.default_rng(seed)
+    n = len(train_idx)
+    n_val = max(1, int(round(n * frac)))
+    perm = rng.permutation(n)
+    return (train_idx[np.sort(perm[n_val:])], train_idx[np.sort(perm[:n_val])])

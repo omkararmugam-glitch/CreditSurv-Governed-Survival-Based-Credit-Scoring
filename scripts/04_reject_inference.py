@@ -40,6 +40,12 @@ from creditsurv.reject_inference.diagnostics import (  # noqa: E402
     parse_rejected_dti,
     run_selection_diagnostic,
 )
+from creditsurv.io.loaders import read_rejected_sample  # noqa: E402
+from creditsurv.pipeline import (  # noqa: E402
+    load_model_bundle,
+    parse_year_range,
+    resolve_data_source,
+)
 from creditsurv.provenance import (  # noqa: E402
     build_stamp,
     find_existing_outputs,
@@ -91,7 +97,32 @@ def main() -> int:
     ap.add_argument("--dti-clip", type=float, default=100.0)
     ap.add_argument("--overwrite", action="store_true",
                     help="allow replacing existing outputs for this --tag")
+    ap.add_argument("--model-tag", default=None,
+                    help="tag of the Stage 2 model whose data file and split to use; "
+                         "defaults to --tag")
+    ap.add_argument("--accepted-years", default=None,
+                    help="restrict accepted loans to these issue years, e.g. 2016-2018")
+    ap.add_argument("--rejected-years", default=None,
+                    help="restrict rejected applications to these application years")
+    ap.add_argument("--diagnostic-only", action="store_true",
+                    help="run the selection-bias diagnostic and stop; skip the "
+                         "correction branch (two model refits plus SurvSHAP, ~1 hour "
+                         "on the full data)")
     args = ap.parse_args()
+    model_tag = args.model_tag or args.tag
+    try:
+        acc_years = parse_year_range(args.accepted_years)
+        rej_years = parse_year_range(args.rejected_years)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if acc_years and not args.diagnostic_only:
+        # The correction branch refits on the model's training split. With the
+        # accepted population restricted to test years that split is empty, so the
+        # combination is refused rather than allowed to produce nonsense.
+        print("ERROR: --accepted-years is only supported with --diagnostic-only.",
+              file=sys.stderr)
+        return 2
 
     cfg = load_config(args.config)
     cfg.paths.ensure_dirs()
@@ -112,7 +143,7 @@ def main() -> int:
         return build_stamp(
             stage="04_reject_inference",
             inputs={"accepted": src, "rejected": cfg.paths.rejected_parquet,
-                    "model": cfg.paths.models_dir / f"02_models_{args.tag}.pkl"},
+                    "model": cfg.paths.models_dir / f"02_models_{model_tag}.pkl"},
             config_path=args.config,
             args=vars(args),
         )
@@ -121,25 +152,59 @@ def main() -> int:
         print(f"ERROR: {cfg.paths.rejected_parquet} not found. Run 00_ingest.py.",
               file=sys.stderr)
         return 2
-    src = (cfg.paths.labeled_parquet if args.tag.startswith("full")
-           else cfg.paths.dev_sample_parquet)
+    # Data file from the model bundle, not from the tag's spelling (see
+    # creditsurv.pipeline). Bundles from before this was recorded fall back to the
+    # old rule, loudly, and only for the tags it was written for.
+    try:
+        bundle_for_source, _ = load_model_bundle(cfg.paths.models_dir, model_tag)
+    except FileNotFoundError:
+        bundle_for_source = {}
+    try:
+        src = resolve_data_source(bundle_for_source, cfg, model_tag)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     if not src.exists():
         print(f"ERROR: {src} not found. Run 01_build_labels.py.", file=sys.stderr)
         return 2
 
     print(f"reading accepted: {src}")
     accepted = pd.read_parquet(src)
-    print(f"  {len(accepted):,} rows")
+    if acc_years:
+        if "issue_year" not in accepted.columns:
+            print("ERROR: --accepted-years needs an issue_year column.", file=sys.stderr)
+            return 2
+        accepted = accepted[accepted["issue_year"].isin(acc_years)]
+    print(f"  {len(accepted):,} rows"
+          + (f" (issue years {acc_years[0]}-{acc_years[-1]})" if acc_years else ""))
 
     print(f"reading rejected: {cfg.paths.rejected_parquet} "
-          f"(sampling {d.rejected_sample_size:,})")
-    rejected = pd.read_parquet(
+          f"(sampling {d.rejected_sample_size:,}"
+          + (f", application years {rej_years[0]}-{rej_years[-1]})" if rej_years else ")"))
+    rejected, n_rej_available = read_rejected_sample(
         cfg.paths.rejected_parquet,
-        columns=["loan_amnt", "risk_score", "dti_raw", "emp_length", "application_d"],
+        ["loan_amnt", "risk_score", "dti_raw", "emp_length", "application_d"],
+        years=rej_years, n=d.rejected_sample_size, seed=d.seed,
     )
-    if len(rejected) > d.rejected_sample_size:
-        rejected = rejected.sample(n=d.rejected_sample_size, random_state=d.seed)
-    print(f"  {len(rejected):,} rows sampled")
+    print(f"  {len(rejected):,} sampled from {n_rej_available:,} available")
+
+    # Composition by year, recorded because the score column's coverage varies
+    # sharply by application year (21% in 2016, 54% in 2017, 7% in 2018), so the
+    # score comparison can be dominated by one year even when the sample is not.
+    rej_year = rejected["application_d"].astype(str).str[:4]
+    composition = {
+        "rejected_by_year": rej_year.value_counts().sort_index().to_dict(),
+        "rejected_score_coverage_by_year": (
+            rejected["risk_score"].notna().groupby(rej_year).mean().round(4).to_dict()),
+        "rejected_with_score_by_year": (
+            rejected["risk_score"].notna().groupby(rej_year).sum().astype(int).to_dict()),
+    }
+    if "issue_year" in accepted.columns:
+        composition["accepted_by_year"] = {
+            str(k): int(v) for k, v in
+            accepted["issue_year"].value_counts().sort_index().items()}
+    for k, v in composition.items():
+        print(f"  {k}: {v}")
 
     acc_common, rej_common = _prepare_common_frames(accepted, rejected, cfg)
     print("\ncommon-feature coverage:")
@@ -195,9 +260,29 @@ def main() -> int:
         "n_rejected_sampled": int(len(rejected)),
         "dti_clip": args.dti_clip,
         "diagnostic": diag.summary(),
-        "correction_applied": bool(apply_correction),
+        "correction_applied": bool(apply_correction) and not args.diagnostic_only,
         "correction_forced": bool(args.force_correction),
+        "model_tag": model_tag,
+        "accepted_years": acc_years,
+        "rejected_years": rej_years,
+        "n_rejected_available": int(n_rej_available),
+        "composition": composition,
+        "diagnostic_only": bool(args.diagnostic_only),
     }
+
+    if args.diagnostic_only:
+        payload["explanation_shift"] = {
+            "status": "not_run",
+            "reason": ("--diagnostic-only: the correction branch was skipped. The gate "
+                       f"decision was {diag.gate_decision!r}, which is reported but "
+                       "not acted on."),
+        }
+        payload["provenance"] = stamp()
+        out = cfg.paths.tables_dir / f"04_reject_inference_{args.tag}.json"
+        write_json(payload, out)
+        print(f"\n--diagnostic-only: stopping after the gate ({diag.gate_decision}).")
+        print(f"results -> {out}")
+        return 0
 
     # ---------------- correction + explanation shift ----------------
     if not apply_correction:
@@ -229,7 +314,7 @@ def main() -> int:
     payload["weights"] = weights.summary()
 
     # Refit the model with and without weights, then re-explain both.
-    model_path = cfg.paths.models_dir / f"02_models_{args.tag}.pkl"
+    model_path = cfg.paths.models_dir / f"02_models_{model_tag}.pkl"
     if not model_path.exists():
         print(f"\nERROR: {model_path} not found; run 02_train_models.py first.",
               file=sys.stderr)

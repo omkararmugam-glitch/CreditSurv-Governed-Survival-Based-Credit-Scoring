@@ -30,6 +30,7 @@ from creditsurv.features.build import (  # noqa: E402
     build_design_matrix,
     default_spec,
     train_test_split_loans,
+    validation_split,
 )
 from creditsurv.models.cox import CoxModel, age_dependent_risk_profile  # noqa: E402
 from creditsurv.models.discrete_hazard import (  # noqa: E402
@@ -37,6 +38,7 @@ from creditsurv.models.discrete_hazard import (  # noqa: E402
     expansion_row_estimate,
 )
 from creditsurv.models.evaluate import CensoringModel, evaluate_survival  # noqa: E402
+from creditsurv.pipeline import encode_data_source  # noqa: E402
 from creditsurv.provenance import (  # noqa: E402
     build_stamp,
     find_existing_outputs,
@@ -59,6 +61,12 @@ def main() -> int:
     ap.add_argument("--with-lc-grade", action="store_true",
                     help="benchmark variant including LC grade / sub_grade / int_rate")
     ap.add_argument("--split", default="random", choices=["random", "out_of_time"])
+    ap.add_argument("--oot-cutoff", type=int, default=None,
+                    help="with --split out_of_time: first issue year of the test "
+                         "period (e.g. 2016 trains on <=2015, tests on >=2016). "
+                         "Required; the quantile-based default landed on 2018.")
+    ap.add_argument("--val-frac", type=float, default=0.1,
+                    help="share of TRAINING loans held out for early stopping")
     ap.add_argument("--time-bin", type=int, default=None,
                     help="discrete-hazard bin width in months (default from config)")
     ap.add_argument("--negative-subsample", type=float, default=1.0,
@@ -76,6 +84,15 @@ def main() -> int:
                     help="allow replacing existing outputs for this tag, including "
                          "the fitted model that later stages were computed from")
     args = ap.parse_args()
+    if args.split == "out_of_time" and args.oot_cutoff is None:
+        print("ERROR: --split out_of_time requires an explicit --oot-cutoff YEAR. "
+              "The implicit quantile-based cutoff would put the boundary in the "
+              "wrong year.", file=sys.stderr)
+        return 2
+    if args.oot_cutoff is not None and args.split != "out_of_time":
+        print("ERROR: --oot-cutoff only applies with --split out_of_time.",
+              file=sys.stderr)
+        return 2
 
     cfg = load_config(args.config)
     cfg.paths.ensure_dirs()
@@ -113,19 +130,66 @@ def main() -> int:
           f"{'  (INCLUDING LC grade -- benchmark variant)' if with_grade else ''}")
 
     train_idx, test_idx = train_test_split_loans(
-        df, test_size=cfg.model.test_size, seed=cfg.model.seed, scheme=args.split
+        df, test_size=cfg.model.test_size, seed=cfg.model.seed, scheme=args.split,
+        out_of_time_cutoff=args.oot_cutoff,
     )
     print(f"  split={args.split}  train={len(train_idx):,}  test={len(test_idx):,}")
+    years = {}
+    if "issue_year" in df.columns:
+        years = {
+            "train_years": sorted(int(y) for y in df.loc[train_idx, "issue_year"].unique()),
+            "test_years": sorted(int(y) for y in df.loc[test_idx, "issue_year"].unique()),
+        }
+        print(f"  train years {years['train_years'][0]}-{years['train_years'][-1]}, "
+              f"test years {years['test_years'][0]}-{years['test_years'][-1]}")
+    if args.split == "out_of_time":
+        overlap = set(years.get("train_years", [])) & set(years.get("test_years", []))
+        if overlap:
+            print(f"ERROR: out-of-time split has years on both sides: {sorted(overlap)}",
+                  file=sys.stderr)
+            return 2
 
     times = np.array(cfg.model.eval_horizons_months, dtype=float)
-    results, artefacts = [], {}
+    results, artefacts, by_vintage = [], {}, {}
+    early_stopping = None
 
-    # Censoring model is fitted on TRAIN only, so IPCW weights never see test
-    # outcomes.
+    # IPCW censoring model. On a random split train and test share one censoring
+    # distribution, so it is fitted on train and the test set stays untouched. On
+    # an out-of-time split they do not -- 6% of 2007-15 loans are still performing
+    # versus 60% of 2016-18 -- and train-fitted weights would under-weight holdout
+    # cases by up to 23x. There it is fitted on the evaluation set (standard for
+    # Uno-type estimators; it uses follow-up times only, never predictions).
+    ipcw_on = "test" if args.split == "out_of_time" else "train"
+    ipcw_idx = test_idx if ipcw_on == "test" else train_idx
     censoring = CensoringModel(
-        df.loc[train_idx, "duration_months"].to_numpy(),
-        df.loc[train_idx, "event"].to_numpy(),
+        df.loc[ipcw_idx, "duration_months"].to_numpy(),
+        df.loc[ipcw_idx, "event"].to_numpy(),
     )
+    print(f"  IPCW censoring model fitted on the {ipcw_on} set")
+
+    def by_year(name, surv, risk, dur, evt):
+        """Per-vintage metrics on an out-of-time test set, each with its own
+        censoring model, restricted to horizons that vintage can actually reach."""
+        if args.split != "out_of_time" or "issue_year" not in df.columns:
+            return
+        yrs = df.loc[test_idx, "issue_year"].to_numpy()
+        out = {}
+        for y in sorted(set(yrs.tolist())):
+            m = yrs == y
+            reach = times[times < dur[m].max()]
+            if len(reach) < 1:
+                continue
+            k = np.isin(times, reach)
+            cm = CensoringModel(dur[m], evt[m])
+            r = evaluate_survival(
+                model_name=name, split_name=f"test_{int(y)}", survival=surv[m][:, k],
+                times=reach, duration=dur[m], event=evt[m], censoring=cm,
+                risk=None if risk is None else risk[m],
+            )
+            out[str(int(y))] = r.summary()
+            print(f"  [{name}] vintage {int(y)}: n={int(m.sum()):,} "
+                  f"C={r.concordance:.4f}, horizons up to {int(reach.max())}m")
+        by_vintage[name] = out
 
     # ---------------- Cox ----------------
     if not args.skip_cox:
@@ -152,14 +216,18 @@ def main() -> int:
         cox = CoxModel(penalizer=0.01).fit(dm_tr.X, dm_tr.duration, dm_tr.event)
         print(f"[cox] fitted in {time.time() - t0:.1f}s")
 
+        cox_surv = cox.predict_survival(dm_te.X, times)
+        cox_risk = cox.predict_risk(dm_te.X)
         res = evaluate_survival(
             model_name="cox", split_name="test",
-            survival=cox.predict_survival(dm_te.X, times), times=times,
+            survival=cox_surv, times=times,
             duration=dm_te.duration.to_numpy(), event=dm_te.event.to_numpy(),
-            censoring=censoring, risk=cox.predict_risk(dm_te.X), calibration_at=24.0,
+            censoring=censoring, risk=cox_risk, calibration_at=24.0,
         )
         print(res)
         results.append(res)
+        by_year("cox", cox_surv, cox_risk, dm_te.duration.to_numpy(),
+                dm_te.event.to_numpy())
 
         coefs = cox.coefficient_table()
         write_table(coefs, cfg.paths.tables_dir / f"02_cox_coefficients_{tag}.csv")
@@ -190,7 +258,12 @@ def main() -> int:
     # ---------------- discrete-time hazard ----------------
     if not args.skip_gbm:
         time_bin = args.time_bin or cfg.model.time_bin_months
-        dg_tr = build_design_matrix(df.loc[train_idx], spec, flavour="gbm")
+        fit_idx, val_idx = validation_split(train_idx, frac=args.val_frac,
+                                            seed=cfg.model.seed)
+        print(f"\n[gbm] early stopping validates on {len(val_idx):,} held-out "
+              f"TRAINING loans ({args.val_frac:.0%}); fitting on {len(fit_idx):,}")
+        dg_tr = build_design_matrix(df.loc[fit_idx], spec, flavour="gbm")
+        dg_val = build_design_matrix(df.loc[val_idx], spec, flavour="gbm")
         dg_te = build_design_matrix(df.loc[test_idx], spec, flavour="gbm")
 
         est = expansion_row_estimate(dg_tr.duration.to_numpy(), time_bin, 60)
@@ -215,19 +288,28 @@ def main() -> int:
             seed=cfg.model.seed,
         ).fit(
             dg_tr.X, dg_tr.duration.to_numpy(), dg_tr.event.to_numpy(),
-            valid=(dg_te.X, dg_te.duration.to_numpy(), dg_te.event.to_numpy()),
+            valid=(dg_val.X, dg_val.duration.to_numpy(), dg_val.event.to_numpy()),
         )
+        n_trees = dh.booster.num_trees()
         print(f"[gbm] fitted on {dh.training_rows_:,} person-periods in "
-              f"{time.time() - t0:.1f}s")
+              f"{time.time() - t0:.1f}s; {n_trees} trees "
+              f"(best iteration {dh.booster.best_iteration}, cap 600)")
+        early_stopping = {"validation": f"random {args.val_frac:.0%} of training loans",
+                          "n_fit": int(len(fit_idx)), "n_val": int(len(val_idx)),
+                          "trees": int(n_trees),
+                          "best_iteration": int(dh.booster.best_iteration)}
 
+        gbm_surv = dh.predict_survival(dg_te.X, times)
         res = evaluate_survival(
             model_name="discrete_hazard", split_name="test",
-            survival=dh.predict_survival(dg_te.X, times), times=times,
+            survival=gbm_surv, times=times,
             duration=dg_te.duration.to_numpy(), event=dg_te.event.to_numpy(),
             censoring=censoring, calibration_at=24.0,
         )
         print(res)
         results.append(res)
+        by_year("discrete_hazard", gbm_surv, None, dg_te.duration.to_numpy(),
+                dg_te.event.to_numpy())
 
         imp = dh.feature_importance()
         write_table(imp, cfg.paths.tables_dir / f"02_gbm_importance_{tag}.csv")
@@ -272,6 +354,12 @@ def main() -> int:
         "tag": tag,
         "n_rows": int(len(df)),
         "split_scheme": args.split,
+        "oot_cutoff": args.oot_cutoff,
+        **years,
+        "ipcw_fitted_on": ipcw_on,
+        "early_stopping": early_stopping,
+        "data_source": encode_data_source(src),
+        "results_by_vintage": by_vintage,
         "time_bin_months": int(args.time_bin or cfg.model.time_bin_months),
         "negative_subsample": float(args.negative_subsample),
         "with_lc_grade": bool(with_grade),
@@ -290,7 +378,11 @@ def main() -> int:
     model_path = cfg.paths.models_dir / f"02_models_{tag}.pkl"
     with open(model_path, "wb") as fh:
         pickle.dump({"artefacts": artefacts, "spec": spec,
-                     "train_idx": train_idx, "test_idx": test_idx}, fh)
+                     "train_idx": train_idx, "test_idx": test_idx,
+                     # Stages 3 and 4 read this instead of guessing from the tag.
+                     "data_source": encode_data_source(src),
+                     "split": {"scheme": args.split, "oot_cutoff": args.oot_cutoff,
+                               **years}}, fh)
     payload["provenance"] = build_stamp(
         stage="02_train_models",
         inputs={"data": src},
