@@ -661,3 +661,61 @@ on 2016-2018 rejected applicants (item 5) are descriptive and have no pass/fail 
 
 *Not run yet.* The pre-registered decision rules above were fixed before any holdout result existed.
 
+## 7. Bulk explanation: can TreeSHAP stand in for SurvSHAP(t)?
+
+<!-- keep:preregistration-explainer -->
+### 7.0 Pre-registration (written before the comparison was run)
+
+**The problem.** SurvSHAP(t) costs about 2.7 seconds per applicant on the full
+model. A 200 MB upload is roughly 1.9 million applicants, of which some 17% are
+declined at the 0.30 threshold, so Regulation B reasons for one such file would
+take about nine months of compute. It is also sampled, so an applicant's stated
+reasons can change with which other applicants happen to be explained alongside
+them. Neither is acceptable for a production decision file.
+
+**The candidate.** TreeSHAP reads the fitted trees directly: exact, deterministic
+and measured at 4 ms per applicant here, about 700 times faster. It explains the
+per-period hazard margin rather than survival, so
+`creditsurv/explain/tree_shap.py` combines the per-period Shapley values with the
+applicant's own hazards. Because Shapley values are linear in the value function,
+the result is an *exact* Shapley value of `sum_t h_t * f_t`, a first-order
+expansion of cumulative hazard around the applicant's own point -- not an exact
+Shapley value of the default probability itself. That is precisely why it is
+validated here instead of assumed equivalent.
+
+**What is being tested.** Whether TreeSHAP picks the same principal reasons a
+notice would have stated under SurvSHAP(t), for applicants who are actually
+declined. Both explainers are passed through the same
+`build_adverse_action_notice`, so the Regulation B filtering, the geography
+exclusion and the wording are identical and only the attributions differ.
+
+**Sample.** At least 1,000 applicants drawn from the full model's test split,
+restricted to those the configured threshold declines.
+
+**Acceptance bar, fixed before running:**
+
+| # | Criterion | Bar |
+|---|---|---|
+| E1 | Applicants whose **top stated reason** is identical under both explainers | >= 90% |
+| E2 | Mean overlap of the **top-4 stated reason sets** (shared / 4) | >= 0.75 |
+
+Both must hold. If either fails, TreeSHAP is not used for notices, and the
+fallback is to make SurvSHAP(t) deterministic per applicant by seeding each call
+from the applicant's row id, so that reasons stop depending on batch membership --
+at unchanged cost.
+
+**Reference measurement, for interpretation only.** SurvSHAP(t) is not perfectly
+reproducible against itself: an earlier measurement found the fourth stated reason
+moving with the background draw. So the same comparison is also run
+SurvSHAP-against-SurvSHAP with two different seeds on a 300-applicant subset, to
+show what agreement rate a *perfect* stand-in could achieve. This number is
+reported alongside the result and explicitly **cannot rescue a failed bar**: if
+TreeSHAP misses E1 or E2, it fails, whatever the ceiling turns out to be.
+
+**Scope if it passes.** TreeSHAP becomes the reason generator for bulk scoring
+runs only. SurvSHAP(t) remains the explainer for the research stages (3, 3b, 3c)
+and for single-applicant work, and every scored row records which explainer
+produced its reasons.
+<!-- /keep:preregistration-explainer -->
+
+*Not run yet.* The bar above was fixed before the comparison existed.

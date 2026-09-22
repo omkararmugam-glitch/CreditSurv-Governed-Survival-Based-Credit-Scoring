@@ -34,7 +34,9 @@ SECTION_MARKERS = {
     "3": ("## 3. Explainability", "## 4. Reject inference (diagnostic-gated)"),
     "4": ("## 4. Reject inference (diagnostic-gated)", "## 5. Summary"),
     "5": ("## 5. Summary", "## 6. Out-of-time holdout"),
-    "6": ("## 6. Out-of-time holdout", None),
+    # Bounded at section 7, not at end-of-file: with end=None this stage would
+    # delete everything written after section 6, including a pre-registration.
+    "6": ("## 6. Out-of-time holdout", "## 7. Bulk explanation"),
 }
 SECTIONS = ("2", "3", "4", "5", "6")
 
