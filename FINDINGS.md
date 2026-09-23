@@ -716,6 +716,47 @@ TreeSHAP misses E1 or E2, it fails, whatever the ceiling turns out to be.
 runs only. SurvSHAP(t) remains the explainer for the research stages (3, 3b, 3c)
 and for single-applicant work, and every scored row records which explainer
 produced its reasons.
+
+### 7.0b Addendum, written before any result was read
+
+Two things fixed in advance so that neither can be chosen in hindsight.
+
+**A secondary comparison, and what it cannot do.** The primary comparison holds
+TreeSHAP against a *single* SurvSHAP(t) draw, and that draw carries the sampling
+noise already recorded in this project: an applicant's fourth stated reason can
+move with the background draw. So a second comparison is registered here, against
+**SurvSHAP(t) averaged over 3 independent draws** on a 300-applicant subset, using
+the mean attribution per feature before the reasons are selected. Averaging lowers
+the noise in the target, so agreement with it is the better estimate of whether
+TreeSHAP finds the same drivers as SurvSHAP *in expectation*.
+
+It is **secondary and reported for interpretation only**. The verdict on E1 and E2
+is decided by the primary comparison against a single draw, exactly as specified in
+7.0. Neither the secondary numbers nor the SurvSHAP-against-itself ceiling can move
+the verdict, and neither can change the `decision.bulk_explainer` setting. If the
+primary comparison fails and the secondary one looks better, the recorded outcome
+is still a failure, and the reason for the gap is noted as a finding rather than
+used as grounds to proceed. Cost of the secondary run is about 40 minutes, which is
+why it is worth doing at all.
+
+**What bulk runs do if TreeSHAP fails.** Seeding each SurvSHAP(t) call from the
+applicant's row id fixes reproducibility -- a notice stops depending on batch
+membership -- but it does nothing about cost, and a declined applicant with no
+stated reasons is a compliance gap whatever the reason for it. So in that case:
+
+* Bulk runs explain **every** rejected applicant, not a capped subset. The cap
+  stops being a normal operating mode.
+* The run happens in the background with a **visible estimate of time remaining**,
+  computed from the measured per-applicant cost and the number of rejected rows,
+  shown before it starts and updated as it goes. At 2.7 s per applicant a file with
+  100,000 declined applicants is about 76 hours, and the page must say so plainly
+  rather than start silently.
+* The `reasons not generated` marker then means one thing only: **the run was
+  stopped before it finished**. Rows that were never reached keep the marker and are
+  counted, so a partial file is never mistaken for a complete one.
+
+This is the recorded plan for the failure branch, chosen before the result was
+known.
 <!-- /keep:preregistration-explainer -->
 
 *Not run yet.* The bar above was fixed before the comparison existed.

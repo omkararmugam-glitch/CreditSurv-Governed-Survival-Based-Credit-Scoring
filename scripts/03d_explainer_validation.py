@@ -12,11 +12,15 @@ before this script was run:
     E1  same top stated reason           >= 90% of applicants
     E2  mean top-4 reason-set overlap    >= 0.75
 
-A third number is reported for interpretation only: SurvSHAP(t) against itself
-under two seeds, which is the best any stand-in could do. It cannot rescue a
-failed bar.
+Two further numbers are reported for interpretation only, and neither can rescue a
+failed bar (FINDINGS 7.0b):
+
+* SurvSHAP(t) against itself under two seeds -- the best any stand-in could do.
+* ``--average-draws k``: TreeSHAP against SurvSHAP(t) averaged over k independent
+  draws, which lowers the sampling noise in the target.
 
     python scripts/03d_explainer_validation.py --model-tag full --n-explain 1000
+    python scripts/03d_explainer_validation.py --secondary-only --average-draws 3
 """
 
 from __future__ import annotations
@@ -74,6 +78,16 @@ def main(argv: list[str] | None = None) -> int:
                     help="declined applicants compared (pre-registered: >= 1000)")
     ap.add_argument("--n-ceiling", type=int, default=300,
                     help="subset used for the SurvSHAP-against-itself reference")
+    ap.add_argument("--average-draws", type=int, default=0,
+                    help="SECONDARY comparison (FINDINGS 7.0b): compare TreeSHAP "
+                         "with SurvSHAP(t) averaged over this many independent "
+                         "draws. Reported for interpretation only; it cannot "
+                         "change the verdict. 0 skips it.")
+    ap.add_argument("--n-average", type=int, default=300,
+                    help="applicants used for the secondary comparison")
+    ap.add_argument("--secondary-only", action="store_true",
+                    help="run only the secondary comparison and write it beside an "
+                         "existing primary result, leaving that result untouched")
     ap.add_argument("--threshold", type=float, default=None,
                     help="default: decision.reject_at_or_above")
     ap.add_argument("--overwrite", action="store_true")
@@ -83,10 +97,16 @@ def main(argv: list[str] | None = None) -> int:
     cfg.paths.ensure_dirs()
     out_json = cfg.paths.tables_dir / f"03d_explainer_validation_{args.tag}.json"
     out_csv = cfg.paths.tables_dir / f"03d_explainer_per_applicant_{args.tag}.csv"
-    refused = guard_outputs([out_json, out_csv], args.overwrite,
+    secondary_json = (cfg.paths.tables_dir
+                      / f"03d_explainer_secondary_{args.tag}.json")
+    guarded = ([secondary_json] if args.secondary_only else [out_json, out_csv])
+    refused = guard_outputs(guarded, args.overwrite,
                             script="03d_explainer_validation.py")
     if refused:
         return refused
+    if args.secondary_only and not args.average_draws:
+        print("ERROR: --secondary-only needs --average-draws.", file=sys.stderr)
+        return 2
 
     threshold = (args.threshold if args.threshold is not None
                  else cfg.decision.reject_at_or_above)
@@ -165,6 +185,57 @@ def main(argv: list[str] | None = None) -> int:
               f"top-1 {ceiling['top1_agreement']:.1%}, "
               f"mean top-4 overlap {ceiling['mean_top4_overlap']:.2f}")
 
+    # ------------------------------- SECONDARY, interpretation only ----------
+    # Registered in FINDINGS 7.0b before any result was read: TreeSHAP against
+    # SurvSHAP(t) averaged over several draws, which lowers the noise in the
+    # target. It cannot change E1/E2 or the bulk_explainer decision.
+    secondary = {}
+    if args.average_draws:
+        import dataclasses
+
+        n_avg = min(args.n_average, len(X))
+        sub = X.iloc[:n_avg]
+        phis = []
+        for k in range(args.average_draws):
+            seed = cfg.explain.seed + 100 + k
+            np.random.seed(seed)
+            draw = explain_survshap(model, sub, background, times,
+                                    nsamples=cfg.explain.kernel_nsamples,
+                                    n_background=cfg.explain.n_background, seed=seed)
+            phis.append(draw.phi)
+            print(f"  secondary draw {k + 1}/{args.average_draws} done")
+        averaged = dataclasses.replace(draw, phi=np.mean(phis, axis=0))
+        avg_reasons = [_reasons(averaged, i, horizon, "survshap-averaged")
+                       for i in range(n_avg)]
+        secondary = {
+            "draws": int(args.average_draws),
+            "n_applicants": int(n_avg),
+            "status": "SECONDARY - interpretation only, cannot change the verdict",
+            "treeshap_vs_averaged_survshap": _agreement(avg_reasons,
+                                                        tree_reasons[:n_avg]),
+            "single_draw_vs_averaged_survshap": _agreement(avg_reasons,
+                                                           surv_reasons[:n_avg]),
+        }
+        s = secondary["treeshap_vs_averaged_survshap"]
+        print(f"secondary (vs SurvSHAP averaged over {args.average_draws} draws, "
+              f"{n_avg} applicants): top-1 {s['top1_agreement']:.1%}, "
+              f"mean top-4 overlap {s['mean_top4_overlap']:.2f}  "
+              f"[interpretation only]")
+        if args.secondary_only:
+            write_json({"tag": args.tag, "model_tag": args.model_tag,
+                        "secondary": secondary,
+                        "provenance": build_stamp(
+                            stage="03d_explainer_secondary",
+                            inputs={"data": src, "model": model_path},
+                            outputs={"secondary": secondary_json},
+                            config_path=args.config,
+                            args={"average_draws": args.average_draws,
+                                  "n_average": n_avg})},
+                       secondary_json)
+            print(f"\nSecondary result written to {secondary_json.name}. The primary "
+                  f"result was not touched.")
+            return 0
+
     per_applicant = pd.DataFrame({
         "row_index": X.index.to_numpy(),
         "pd_at_horizon": np.round(pd_h[pick], 4),
@@ -195,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
         "E2_pass": bool(e2),
         "verdict": verdict,
         "reference_ceiling_survshap_vs_itself": ceiling,
+        "secondary_averaged_survshap": secondary,
         "seconds": {"treeshap_total": round(tree_seconds, 2),
                     "treeshap_per_applicant_ms": round(tree_seconds / len(X) * 1000, 3),
                     "survshap_total": round(surv_seconds, 1),
