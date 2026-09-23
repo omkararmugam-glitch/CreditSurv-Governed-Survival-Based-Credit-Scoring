@@ -91,6 +91,7 @@ decision:
   max_explained: 100         # rejected applicants explained per run
   background_rows: 20000
   background_above_mb: 25     # uploads >= this run in a background process
+  bulk_explainer: survshap    # survshap | treeshap | auto (see FINDINGS section 7)
   chunk_rows: 50000           # rows per block; peak memory follows this, not file size
   drift_min_rows: 500         # below this, drift is reported as 'too few rows'
   min_feature_coverage: 0.60

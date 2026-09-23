@@ -193,6 +193,8 @@ own:
 ./.venv/Scripts/python.exe scripts/06_score_upload.py --file applicants.csv
 ./.venv/Scripts/python.exe scripts/06_score_upload.py --file applicants.csv \
     --model-tag holdout --threshold 0.25 --max-explained 500
+./.venv/Scripts/python.exe scripts/06_score_upload.py --file applicants.csv \
+    --chunk-rows 10000 --explainer auto        # less memory; faster reasons
 ```
 
 Exit codes: 0 finished, 2 bad arguments or missing input, 3 the file or the model was
@@ -321,9 +323,14 @@ data scores a median PSI of about 0.08 at 100 rows — within a whisker of the
 at 500 rows, a fifth of the band. Both figures are pinned by a test. A grey status
 says nothing is wrong with the file; there is simply not enough of it to tell. The dashboard shows
 green, amber, red or grey with the shifted features listed, and every run downloads
-`data_drift.csv` alongside `cleaning_report.csv`. The profile and the drift check
-are computed on the first block of the file (up to 50,000 rows), and the count used
-is reported as `profiled_rows`. A feature that cannot be compared
+`data_drift.csv` alongside `cleaning_report.csv`.
+
+The profile and the drift check run on a **uniform random sample of up to 50,000
+rows drawn across the whole file** (priority sampling, one pass, bounded memory),
+never on its opening rows. Loan files usually arrive sorted by date, so a
+first-block sample would describe one vintage and report drift the file does not
+have — a test builds exactly that file and checks the verdict follows the file
+rather than its start. The count used is reported as `profiled_rows`. A feature that cannot be compared
 — absent from the upload — is reported as unknown and holds the overall status at
 amber rather than counting as evidence of stability.
 

@@ -472,3 +472,30 @@ class TestReportEndToEnd:
         r = _run("05_report.py", cfg, "--tag", "holdout", "--findings", str(findings))
         assert r.returncode == 2 and "out-of-time run" in r.stderr
         assert findings.read_text(encoding="utf-8") == before
+
+
+def test_section_6_is_bounded_by_the_next_heading(tmp_path):
+    """A section written after the generated ones -- a hand-written analysis, or the
+    explainer pre-registration -- must survive a report run. Section 6 used to end
+    at end-of-file, which would have deleted it."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "report_mod", Path(__file__).resolve().parents[1] / "scripts" / "05_report.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    text = ("## 5. Summary\n\nfive\n\n"
+            "## 6. Out-of-time holdout\n\nold six\n\n"
+            "## 7. Something written by hand\n\nkeep me\n")
+    out = mod.replace_section(text, "## 6. Out-of-time holdout", mod.NEXT_HEADING,
+                              "## 6. Out-of-time holdout\n\nnew six")
+    assert "new six" in out and "old six" not in out
+    assert "## 7. Something written by hand" in out and "keep me" in out
+    assert "five" in out
+
+    # With no later section there is nothing to protect, and it still works.
+    plain = "## 6. Out-of-time holdout\n\nold six\n"
+    out2 = mod.replace_section(plain, "## 6. Out-of-time holdout", mod.NEXT_HEADING,
+                               "## 6. Out-of-time holdout\n\nnew six")
+    assert "new six" in out2 and "old six" not in out2

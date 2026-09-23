@@ -221,7 +221,7 @@ mean_pd = s[f"mean_pd_{s['horizon_months']}m"]
 c[4].metric(f"Average {s['horizon_months']}m risk", f"{mean_pd:.1%}")
 if s["n_rejected"]:
     st.caption(f"Reasons generated for {s['n_explained']:,} of {s['n_rejected']:,} "
-               f"rejected applicants"
+               f"rejected applicants by **{s.get('explainer', 'survshap')}**"
                + (f" — {missing_reasons:,} still without reasons."
                   if missing_reasons else " (all of them).")
                + (f"  Profiled and drift-checked on the first "

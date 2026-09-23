@@ -12,7 +12,9 @@ cleaning data        :func:`creditsurv.features.build.build_design_matrix`
                      (which applies ``add_derived_features``)
 scoring applicants   ``model.predict_survival`` -- the fitted
                      :class:`DiscreteTimeHazardModel` or :class:`CoxModel`
-explaining           :func:`creditsurv.explain.survshap.explain_survshap`
+explaining           :func:`creditsurv.explain.survshap.explain_survshap`,
+                     or :func:`...tree_shap.explain_tree_shap` for bulk runs
+                     (``decision.bulk_explainer``; see FINDINGS section 7)
 notices              :func:`...adverse_action.build_adverse_action_notice`
 traceability         :func:`creditsurv.provenance.build_stamp`
 ===================  ====================================================
@@ -58,6 +60,7 @@ from .cleaning import (CleaningPolicy, CleaningReport, CleaningValues, clean,
 from .config import Config
 from .explain.adverse_action import MAX_PRINCIPAL_REASONS, build_adverse_action_notice
 from .explain.survshap import explain_survshap
+from .explain.tree_shap import explain_tree_shap
 from .features.build import build_design_matrix
 from .pipeline import load_model_bundle, resolve_data_source
 from .provenance import PROJECT_ROOT, build_stamp, file_fingerprint
@@ -66,7 +69,7 @@ __all__ = ["CORE_REQUIRED", "ALIASES", "OUTPUT_NAMES", "BatchError",
            "ValidationReport", "ScoringContext", "BatchResult", "read_upload",
            "validate", "load_context", "prepare", "profile", "run_batch",
            "load_result", "bundle_zip", "iter_chunks", "Aggregates", "CAP_NOTE",
-           "RUNS_DIR"]
+           "choose_explainer", "RUNS_DIR"]
 
 RUNS_DIR = PROJECT_ROOT / "outputs" / "runs"
 
@@ -74,11 +77,61 @@ PREVIEW_ROWS = 2_000
 """Rows kept in memory for the dashboard preview table. The whole result
 is in scored_applicants.csv."""
 
+
+class _Reservoir:
+    """A uniform random sample of up to ``size`` rows, drawn across the whole file.
+
+    Priority sampling: every row gets an independent uniform key and the rows with
+    the ``size`` smallest keys are kept, which is a uniform sample without
+    replacement no matter how the file is divided into blocks. Only the current
+    sample and one block's keys are ever held, so memory stays bounded, and the
+    work is vectorised rather than row by row.
+
+    Why not simply the first block: a file sorted by date -- which is how loan
+    files usually arrive -- has a first block that is one vintage, not the file.
+    Profiling and drift would then describe a population the file does not have,
+    which is the failure the drift check exists to catch.
+    """
+
+    def __init__(self, size: int, seed: int = 0):
+        self.size = int(size)
+        self.rng = np.random.default_rng(seed)
+        self.seen = 0
+        self._rows: pd.DataFrame | None = None
+        self._keys: np.ndarray = np.empty(0, dtype=float)
+
+    def add_block(self, block: pd.DataFrame) -> None:
+        n = len(block)
+        if n == 0:
+            return
+        self.seen += n
+        keys = self.rng.random(n)
+        if n > self.size:                       # only the best of this block matter
+            best = np.argpartition(keys, self.size)[: self.size]
+            block, keys = block.iloc[best], keys[best]
+        rows = block.reset_index(drop=True)
+        if self._rows is None:
+            self._rows, self._keys = rows, keys
+        else:
+            self._rows = pd.concat([self._rows, rows], ignore_index=True)
+            self._keys = np.concatenate([self._keys, keys])
+        if len(self._rows) > self.size:
+            keep = np.argpartition(self._keys, self.size)[: self.size]
+            keep.sort()
+            self._rows = self._rows.iloc[keep].reset_index(drop=True)
+            self._keys = self._keys[keep]
+
+    def frame(self) -> pd.DataFrame:
+        return (self._rows.reset_index(drop=True) if self._rows is not None
+                else pd.DataFrame())
+
+
 PROFILE_ROWS = 50_000
-"""Rows the profile and the drift check are computed on. Both describe the
-upload rather than decide anything, and a sample this size settles their
-numbers well inside their own noise; the count used is reported as
-``profiled_rows``."""
+"""Rows the profile and the drift check are computed on -- a uniform random
+sample drawn across the whole file (:class:`_Reservoir`), never its first rows.
+Both describe the upload rather than decide anything, and a sample this size
+settles their numbers well inside their own noise; the count used is reported
+as ``profiled_rows``."""
 
 OUTPUT_NAMES: tuple[str, ...] = (
     "scored_applicants.csv", "approved_applicants.csv", "rejected_applicants.csv",
@@ -591,10 +644,35 @@ def _reason_columns(reasons: dict, positions, upto: int) -> dict:
     return out
 
 
+def choose_explainer(ctx: ScoringContext, requested: str | None = None) -> str:
+    """Which explainer will write this run's reasons, and why it can.
+
+    TreeSHAP reads the fitted trees, so it needs the discrete-hazard booster; for
+    the Cox model there is nothing to read and SurvSHAP(t) is the only option.
+    """
+    requested = (requested or getattr(ctx.cfg.decision, "bulk_explainer", "survshap")
+                 or "survshap").lower()
+    tree_possible = (ctx.model_name == "discrete_hazard"
+                     and getattr(ctx.model, "booster", None) is not None)
+    if requested == "treeshap":
+        if not tree_possible:
+            raise BatchError(
+                "TreeSHAP needs the discrete-hazard model, and this run uses "
+                f"{ctx.model_name}.",
+                "decision.bulk_explainer=treeshap with a non-tree model",
+                "Set decision.bulk_explainer to survshap or auto, or score with "
+                "the discrete-hazard model.")
+        return "treeshap"
+    if requested == "auto":
+        return "treeshap" if tree_possible else "survshap"
+    return "survshap"
+
+
 def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
               model_name: str | None = None, threshold: float | None = None,
               max_explained: int | None = None, runs_dir: Path | None = None,
               run_dir: Path | None = None, chunk_rows: int | None = None,
+              explainer: str | None = None,
               progress=None, ctx: ScoringContext | None = None) -> BatchResult:
     """Score an upload end to end, in row blocks, and write this run's files.
 
@@ -675,6 +753,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                 "these exact names, and upload again.")
     except BatchError as exc:
         fail("check", exc)
+    explainer_name = choose_explainer(ctx, explainer)
     say("check", "done",
         f"{len(report.present)} of {report.n_features} model features present, "
         f"read in blocks of {chunk_rows:,} rows")
@@ -688,15 +767,15 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     prof = None
     drift_result = None
     profile_frame = pd.DataFrame()
+    reservoir = _Reservoir(PROFILE_ROWS, seed=cfg.explain.seed)
     agg = Aggregates()
     agg.group_column = "purpose" if "purpose" in ctx.spec.categorical else ""
-    profile_rows, profile_kept = [], 0
     preview, preview_kept = [], 0
     notices = []
     budget = max_explained
     row_offset = 0
     n_blocks = 0
-    said_clean = said_score = said_explain = False
+    said_clean = said_score = said_explain = said_profile = False
 
     def blocks():
         yield first
@@ -725,30 +804,13 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
             said_clean = True
             say("clean", "done", "; ".join(clean_report.plain_english()[:2]))
 
-        # A bounded sample feeds the profile and the drift check; both describe
-        # the upload, and the count used is reported as profiled_rows.
-        if profile_kept < PROFILE_ROWS:
-            take = block.head(PROFILE_ROWS - profile_kept)
-            profile_rows.append(take)
-            profile_kept += len(take)
-
-        # Profiling runs on that sample as soon as it is available -- after the
-        # first block -- so the page's steps finish in the order it shows them.
-        if prof is None:
+        # Every block feeds the sample, so the profile and the drift check
+        # describe the whole file rather than its opening rows. That means
+        # profiling finishes with the last block, not the first.
+        if not said_profile:
+            said_profile = True
             say("profile", "running")
-            profile_frame = pd.concat(profile_rows, ignore_index=True)
-            try:
-                prof = profile(profile_frame, ctx)
-            except Exception as exc:
-                fail("profile", BatchError(
-                    "The file was read, but it could not be profiled.", repr(exc),
-                    "Try again, or check the Details for the column involved."))
-            drift_result = prof["drift"]
-            say("profile", "done",
-                f"drift: {drift_result.status}"
-                + (f" ({drift_result.n_large} large, {drift_result.n_moderate} "
-                   f"moderate)" if drift_result.status in ("large", "moderate")
-                   else ""))
+        reservoir.add_block(block)
 
         # -------------------------------------------------------- score ----
         if not said_score:
@@ -780,15 +842,21 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
             f"{CAP_NOTE} (decision.max_explained={max_explained})")
         if len(explain_pos):
             try:
-                expl = explain_survshap(
-                    ctx.model, X.iloc[explain_pos], ctx.background, ctx.times,
-                    nsamples=d.explain_nsamples,
-                    n_background=d.explain_n_background, seed=cfg.explain.seed)
+                if explainer_name == "treeshap":
+                    expl = explain_tree_shap(
+                        ctx.model, X.iloc[explain_pos],
+                        horizon_months=float(d.horizon_months), times=ctx.times)
+                else:
+                    expl = explain_survshap(
+                        ctx.model, X.iloc[explain_pos], ctx.background, ctx.times,
+                        nsamples=d.explain_nsamples,
+                        n_background=d.explain_n_background, seed=cfg.explain.seed)
                 for j, pos in enumerate(explain_pos):
                     notice = build_adverse_action_notice(
                         expl, obs=j, applicant_id=str(ids[pos]),
                         horizon_months=int(d.horizon_months),
-                        model_name=f"{ctx.model_name} ({ctx.model_tag})")
+                        model_name=f"{ctx.model_name} ({ctx.model_tag}), "
+                                   f"{explainer_name}")
                     reasons[int(pos)] = notice.reasons
                     fair_flags[int(pos)] = ", ".join(notice.fair_lending_flags)
                     fname = f"notice_{_slug(str(ids[pos]))}.txt"
@@ -814,6 +882,10 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
             "model_tag": ctx.model_tag,
             "model": ctx.model_name,
             "explained": explained_note.to_numpy(),
+            # Which explainer produced this row's reasons, so an output file always
+            # says what its reasons are based on.
+            "explainer": np.where(explained_note.to_numpy() == "explained",
+                                  explainer_name, ""),
         })
         positions = list(range(len(block)))
         for name, values in _reason_columns(reasons, positions, 3).items():
@@ -869,10 +941,21 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         f"{agg.n_rejected_explained:,} of {agg.n_rejected:,} rejected applicants "
         f"explained{cap_note}")
 
-    if len(profile_frame) < agg.n_rows:
-        say("profile", "done",
-            f"drift: {drift_result.status}, profiled on the first "
-            f"{len(profile_frame):,} of {agg.n_rows:,} rows")
+    # ----------------------------------------------------------- profile --
+    profile_frame = reservoir.frame()
+    try:
+        prof = profile(profile_frame, ctx)
+    except Exception as exc:
+        fail("profile", BatchError(
+            "The file was scored, but it could not be profiled.", repr(exc),
+            "Try again, or check the Details for the column involved."))
+    drift_result = prof["drift"]
+    say("profile", "done",
+        f"drift: {drift_result.status}"
+        + (f" ({drift_result.n_large} large, {drift_result.n_moderate} moderate)"
+           if drift_result.status in ("large", "moderate") else "")
+        + (f", on a random sample of {len(profile_frame):,} of {agg.n_rows:,} rows"
+           if len(profile_frame) < agg.n_rows else ""))
 
     # ----------------------------------------------------------- outputs --
     say("files", "running")
@@ -925,8 +1008,11 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "model_trained_on": str(ctx.data_source),
         "threshold": threshold,
         "horizon_months": int(d.horizon_months),
-        "explain_nsamples": d.explain_nsamples,
-        "explain_n_background": d.explain_n_background,
+        "explainer": explainer_name,
+        "explain_nsamples": (d.explain_nsamples if explainer_name == "survshap"
+                             else None),
+        "explain_n_background": (d.explain_n_background if explainer_name == "survshap"
+                                 else None),
         "max_explained": max_explained,
         "n_explained": agg.n_rejected_explained,
         "n_rejected_without_reasons": agg.n_rejected_without_reasons,
@@ -948,6 +1034,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "drift_features_moderate": drift_result.n_moderate,
         "drift_features_large": drift_result.n_large,
         "profiled_rows": len(profile_frame),
+        "profile_sampling": "uniform random across the whole file",
         "chunk_rows": chunk_rows,
         "blocks": n_blocks,
         "seconds_total": round(elapsed, 1),
@@ -967,6 +1054,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         config_path=PROJECT_ROOT / "config" / "config.yaml",
         args={"threshold": threshold, "model_tag": ctx.model_tag,
               "model": ctx.model_name, "max_explained": max_explained,
+              "explainer": explainer_name,
               "chunk_rows": chunk_rows, "cleaning_policy": ctx.policy.version,
               "cleaning_values_fitted_rows": ctx.clean_values.fitted_rows})
     (stamp_dir / "provenance.json").write_text(

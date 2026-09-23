@@ -29,14 +29,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from creditsurv.config import load_config  # noqa: E402
 
+NEXT_HEADING = "<next level-2 heading>"
+"""End marker meaning "wherever the following ## section starts". The last
+generated section uses it so that anything written after it -- a hand-written
+section, a pre-registration -- is never inside the range this stage replaces."""
+
 SECTION_MARKERS = {
     "2": ("## 2. Survival models", "## 3. Explainability"),
     "3": ("## 3. Explainability", "## 4. Reject inference (diagnostic-gated)"),
     "4": ("## 4. Reject inference (diagnostic-gated)", "## 5. Summary"),
     "5": ("## 5. Summary", "## 6. Out-of-time holdout"),
-    # Bounded at section 7, not at end-of-file: with end=None this stage would
-    # delete everything written after section 6, including a pre-registration.
-    "6": ("## 6. Out-of-time holdout", "## 7. Bulk explanation"),
+    # Bounded by whatever level-2 heading comes next, not by end-of-file: with
+    # end=None this stage would delete everything written after section 6,
+    # including a hand-written section or a pre-registration.
+    "6": ("## 6. Out-of-time holdout", NEXT_HEADING),
 }
 SECTIONS = ("2", "3", "4", "5", "6")
 
@@ -984,6 +990,9 @@ def _bounds(text: str, start: str, end: str | None) -> tuple[int, int]:
                          "SECTION_MARKERS.")
     if end is None:
         return i, len(text)
+    if end == NEXT_HEADING:
+        m = re.search(r"(?m)^## ", text[i + len(start):])
+        return i, (i + len(start) + m.start()) if m else len(text)
     j = text.find(end, i + len(start))
     if j == -1:
         raise SystemExit(f"ERROR: closing heading {end!r} not found after {start!r}. "

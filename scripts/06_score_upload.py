@@ -46,6 +46,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-explained", type=int, default=None,
                     help="rejected applicants to explain, ~2.7s each "
                          "(default: decision.max_explained)")
+    ap.add_argument("--chunk-rows", type=int, default=None,
+                    help="rows per block; peak memory follows this, not the file "
+                         "size (default: decision.chunk_rows)")
+    ap.add_argument("--explainer", default=None,
+                    choices=["survshap", "treeshap", "auto"],
+                    help="which explainer writes the reasons "
+                         "(default: decision.bulk_explainer)")
     ap.add_argument("--run-dir", default=None,
                     help="write the outputs here instead of a new timestamped "
                          "folder under outputs/runs (used by the dashboard)")
@@ -75,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         result = run_batch(src, name, cfg, model_tag=args.model_tag,
                            model_name=args.model, threshold=args.threshold,
                            max_explained=args.max_explained,
+                           chunk_rows=args.chunk_rows, explainer=args.explainer,
                            run_dir=Path(args.run_dir) if args.run_dir else None,
                            progress=progress)
     except BatchError as exc:
@@ -95,7 +103,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Feature coverage: {s['features_present']} of {s['features_expected']}"
           + ("  DEGRADED" if s["degraded_coverage"] else ""))
     print(f"Notices written: {s['n_notices']:,} of {s['n_rejected']:,} rejected "
-          f"applicants.")
+          f"applicants, explained with {s['explainer']}.")
+    if s.get("n_rejected_without_reasons"):
+        print(f"WARNING: {s['n_rejected_without_reasons']:,} rejected applicant(s) "
+              f"have NO reasons (cap {s['max_explained']}); those rows say so.")
     print(f"\nOutputs in {result.run_dir}:")
     for name in sorted(result.files):
         print(f"  {name}")

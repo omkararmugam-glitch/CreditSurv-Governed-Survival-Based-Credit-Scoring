@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from creditsurv import batch
+from creditsurv import drift as drift_mod
 from creditsurv.batch import BatchError, ScoringContext, run_batch, validate
 from creditsurv.cleaning import fit_values, policy_from_config
 from creditsurv.config import Config, DecisionConfig, Paths
@@ -137,7 +138,10 @@ def test_end_to_end_produces_every_output(runs, cfg, ctx):
                     progress=lambda s, st, m="": steps.append((s, st)))
 
     assert [s for s, st in steps if st == "done"] == \
-        ["check", "clean", "profile", "score", "explain", "files"]
+        ["check", "clean", "score", "explain", "profile", "files"]
+    # Profiling samples the whole file, so it finishes with the last block --
+    # after scoring, though the page lists it earlier and shows it in progress.
+    assert ("profile", "running") in steps
 
     for name in ("scored_applicants.csv", "approved_applicants.csv",
                  "rejected_applicants.csv", "run_summary.csv",
@@ -533,3 +537,123 @@ def test_nothing_is_written_when_the_file_is_refused(runs, cfg, ctx):
     with pytest.raises(BatchError):
         run_batch(_upload(drop=["annual_inc"]), "a.csv", cfg, ctx=ctx, runs_dir=runs)
     assert not runs.exists() or list(runs.iterdir()) == []
+
+
+# ------------------------------------------------ whole-file profile sample --
+
+def test_reservoir_samples_uniformly_across_the_file():
+    from creditsurv.batch import _Reservoir
+
+    counts = np.zeros(10)
+    for trial in range(60):
+        r = _Reservoir(50, seed=trial)
+        for b in range(50):                       # 50 blocks of 100 rows
+            r.add_block(pd.DataFrame({"i": np.arange(b * 100, (b + 1) * 100)}))
+        counts += np.histogram(r.frame()["i"].to_numpy(), bins=10,
+                               range=(0, 5000))[0]
+    share = counts / counts.sum()
+    assert abs(share - 0.10).max() < 0.02        # flat across the file, not front-loaded
+
+
+def test_reservoir_keeps_everything_when_the_file_is_small():
+    from creditsurv.batch import _Reservoir
+
+    r = _Reservoir(50, seed=1)
+    r.add_block(pd.DataFrame({"i": np.arange(20)}))
+    assert len(r.frame()) == 20 and r.seen == 20
+
+
+def test_reservoir_is_bounded_and_repeatable():
+    from creditsurv.batch import _Reservoir
+
+    def run():
+        r = _Reservoir(25, seed=7)
+        for b in range(20):
+            r.add_block(pd.DataFrame({"i": np.arange(b * 50, (b + 1) * 50)}))
+            assert len(r.frame()) <= 25          # never grows with the file
+        return r.frame()["i"].tolist()
+
+    assert run() == run()                        # same seed, same sample
+
+
+def test_drift_uses_the_whole_file_not_the_first_block(runs, cfg, ctx):
+    """A file sorted so its opening rows are unrepresentative -- the shape a
+    date-sorted loan file has. The first block alone reads as drifted on
+    loan_amnt; the file as a whole does not, and the report must follow the file.
+    """
+    rng = np.random.default_rng(5)
+    n, first = 2000, 100
+    df = pd.read_csv(__import__("io").BytesIO(_upload(n)))
+    # Opening block: tiny loans only. Remainder: the training distribution.
+    df["loan_amnt"] = np.concatenate([rng.uniform(500, 1200, first),
+                                      rng.uniform(1000, 35000, n - first)])
+
+    res = run_batch(df.to_csv(index=False).encode(), "sorted.csv", cfg, ctx=ctx,
+                    runs_dir=runs, chunk_rows=first, max_explained=0)
+    assert res.summary["blocks"] == 20
+    assert res.summary["profiled_rows"] == n
+    assert res.summary["profile_sampling"].startswith("uniform random")
+
+    def status_of(result, feature):
+        row = result.table.loc[result.table["feature"] == feature]
+        return row["status"].iloc[0]
+
+    first_only = drift_mod.compare(ctx.reference, df.head(first), ctx.spec,
+                                   min_rows=100)
+    assert status_of(first_only, "loan_amnt") == "large"      # the opening rows
+    assert status_of(res.drift, "loan_amnt") != "large"       # the actual file
+
+    sample_mean = res.profile["numeric"].set_index("column").loc["loan_amnt", "mean"]
+    assert abs(sample_mean - df["loan_amnt"].mean()) < abs(
+        sample_mean - df["loan_amnt"].head(first).mean())
+
+
+def test_profile_sample_is_capped_on_a_large_file(runs, cfg, ctx, monkeypatch):
+    from creditsurv import batch as batch_mod
+
+    monkeypatch.setattr(batch_mod, "PROFILE_ROWS", 100)
+    res = run_batch(_upload(400), "a.csv", cfg, ctx=ctx, runs_dir=runs,
+                    chunk_rows=60, max_explained=0)
+    assert res.summary["n_rows"] == 400
+    assert res.summary["profiled_rows"] == 100
+    assert len(res.profile["missing"]) > 0
+
+
+# --------------------------------------------------- which explainer is used --
+
+def test_explainer_defaults_to_survshap_and_is_recorded(runs, cfg, ctx):
+    """The default is unchanged until FINDINGS section 7 says otherwise, and every
+    explained row records what produced its reasons."""
+    assert cfg.decision.bulk_explainer == "survshap"
+    res = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs)
+    scored = pd.read_csv(res.files["scored_applicants.csv"])
+    assert res.summary["explainer"] == "survshap"
+    explained = scored[scored["explained"] == "explained"]
+    assert (explained["explainer"] == "survshap").all()
+    # Rows with no reasons claim no explainer.
+    assert scored.loc[scored["explained"] != "explained", "explainer"].fillna("")\
+        .eq("").all()
+
+
+def test_auto_falls_back_to_survshap_without_a_booster(ctx):
+    """The stub model has no booster, so 'auto' must not claim TreeSHAP."""
+    assert batch.choose_explainer(ctx, "auto") == "survshap"
+    assert batch.choose_explainer(ctx, None) == "survshap"
+
+
+def test_treeshap_requested_without_a_tree_model_is_refused(ctx):
+    with pytest.raises(BatchError, match="TreeSHAP needs the discrete-hazard model"):
+        batch.choose_explainer(ctx, "treeshap")
+
+
+def test_auto_picks_treeshap_when_the_booster_is_there(ctx, monkeypatch):
+    class WithBooster:
+        booster = object()
+
+        def predict_survival(self, X, times):        # pragma: no cover - not called
+            raise AssertionError
+
+    monkeypatch.setattr(ctx, "model", WithBooster())
+    assert batch.choose_explainer(ctx, "auto") == "treeshap"
+    assert batch.choose_explainer(ctx, "treeshap") == "treeshap"
+    assert batch.choose_explainer(ctx, "survshap") == "survshap"

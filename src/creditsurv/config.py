@@ -161,6 +161,19 @@ class DecisionConfig:
     are marked as not explained rather than left silently blank."""
     background_rows: int = 20_000
     """Training rows sampled before k-means summarising to explain_n_background."""
+    bulk_explainer: str = "survshap"
+    """Which explainer writes the reasons for a bulk scoring run.
+
+    ``"survshap"`` is SurvSHAP(t) everywhere: sampled, about 2.7s per applicant.
+    ``"treeshap"`` is the exact, deterministic tree explainer, about 4ms per
+    applicant, available only for the discrete-hazard model. ``"auto"`` uses
+    TreeSHAP when the model allows it and SurvSHAP(t) otherwise.
+
+    Whichever runs, the explainer that produced each row's reasons is written into
+    that row, so an output file always says where its reasons came from. Moving off
+    "survshap" is a decision about what a notice is based on, which is why it is a
+    config value with a validation behind it (FINDINGS section 7) rather than an
+    internal default."""
     chunk_rows: int = 50_000
     """An upload is read, cleaned, scored and explained this many rows at a time, so
     peak memory follows the block size rather than the file size."""
