@@ -778,4 +778,105 @@ This is the recorded plan for the failure branch, chosen before the result was
 known.
 <!-- /keep:preregistration-explainer -->
 
+### 7.1 Result: TreeSHAP FAILS the pre-registered bar
+
+Run on the full model's test split, 1,000 applicants declined at
+a 0.30 36-month threshold, both explainers passed through the
+same notice builder.
+
+| # | Criterion | Bar | Observed | Result |
+|---|---|---|---|---|
+| E1 | Same top stated reason | >= 90% | **80.2%** | **FAIL** |
+| E2 | Mean top-4 reason-set overlap | >= 0.75 | 0.84 | PASS |
+
+**Verdict: FAIL.** Both criteria were required. TreeSHAP is **not** used to write
+adverse-action reasons. `decision.bulk_explainer` stays `survshap`.
+
+**The failure is real, not an artifact of SurvSHAP's own noise.** This is what the
+reference ceiling was registered for: SurvSHAP(t) against itself under two seeds
+agrees on the top reason for 95.3% of the same applicants, with
+mean top-4 overlap 0.94. So sampling noise costs about
+5 points of top-1 agreement, while TreeSHAP costs
+about 20. Roughly three quarters of the gap is
+genuine disagreement about which factor matters most, not noise.
+
+What the two explainers agree on is the *set* of drivers: top-4 overlap of
+0.84 passed comfortably, and 41.2% of
+applicants had an identical top-4 set. They disagree on the ordering within that
+set, which is exactly what a notice discloses first. That is consistent with what
+section 3(a) already records about time-agnostic attributions: a hazard-weighted
+margin is not the same quantity as S(t), and where two drivers are close the
+ordering does not survive the substitution.
+
+**Cost, for the record.** TreeSHAP took 6.7 ms per
+applicant against SurvSHAP(t)'s 2.56 s, a factor of
+about 381.
+For 100,000 declined applicants that is 11 minutes versus
+71 hours. The speed was never in doubt; the agreement was,
+and it is the agreement that failed.
+
+**TreeSHAP is kept, but not for notices.** The module stays in the codebase as a
+fast screening tool -- ranking which applicants to review, checking a batch for
+drivers that look wrong -- and every row that carries reasons records which
+explainer produced them, so a file can never be ambiguous about it. Nothing that
+states a reason to an applicant uses it.
+
+**Consequence: the failure branch recorded in 7.0b is what bulk runs do.**
+SurvSHAP(t) is seeded per applicant from the row id, so reasons no longer depend on
+batch membership; bulk runs explain every rejected applicant rather than a capped
+subset; the run is resumable and reports time remaining; and the
+`reasons not generated` marker means only that a run was stopped early.
+
+## 7a. Cheaper SurvSHAP(t) settings for bulk runs
+
+<!-- keep:preregistration-settings -->
+### 7a.0 Pre-registration (written before the comparison was run)
+
+**Why.** TreeSHAP failed 7.1, so bulk runs keep SurvSHAP(t) at 2.56 s per applicant
+-- 71 hours for 100,000 declined applicants. Parallelism divides that by the number
+of cores; a cheaper setting would divide it again. The current settings are
+`nsamples=600`, `n_background=100`, chosen in section 3 for a different purpose: the
+headline number there was a **rank correlation over all 73 features**, which needs a
+settled full ranking. A notice needs only the top four reasons, which is a weaker
+requirement, so the settings may be over-specified for this use -- or may not be.
+This tests it rather than assuming either way.
+
+**What is compared.** The same 1,000 declined applicants from 7.1, the same notice
+builder, full settings (`nsamples=600`, `n_background=100`) as the reference, against
+these candidates:
+
+| candidate | nsamples | n_background | relative cost |
+|---|---|---|---|
+| C1 | 300 | 100 | about 1/2 |
+| C2 | 600 | 50 | about 1/2 |
+| C3 | 300 | 50 | about 1/4 |
+| C4 | 146 (the 2p floor) | 25 | about 1/16 |
+
+**Acceptance bar, fixed before running:**
+
+| # | Criterion | Bar |
+|---|---|---|
+| S1 | Applicants whose top stated reason matches the full-settings run | >= 90% |
+| S2 | Mean top-4 stated reason-set overlap with the full-settings run | >= 0.85 |
+
+Both must hold. The cheapest candidate that passes both is adopted **for bulk runs
+only**; the research stages (3, 3b, 3c) and single-applicant work keep the full
+settings, because their headline numbers are the full-ranking ones that justified
+those settings. If no candidate passes, bulk runs keep the full settings and the
+result is recorded as a negative one.
+
+**How the numbers are to be read.** Section 7.1 measured SurvSHAP(t) against itself
+under two seeds at the full settings: **95.3%** top-1 agreement and **0.94** mean
+top-4 overlap. That is the ceiling any cheaper setting is competing with, and it is
+also why S1 is set at 90% and S2 at 0.85 rather than higher: a candidate cannot be
+asked to beat the method's own reproducibility. A candidate scoring near 95%/0.94 is
+indistinguishable from the full settings; one scoring at the bar is measurably worse
+but within the tolerance fixed here in advance.
+
+**One thing this comparison cannot tell us.** Both sides of it are sampled, so a
+candidate that agrees with the full settings agrees with *one draw* of them. The
+7.1 ceiling bounds how much of any gap is noise; it does not remove the noise from
+this measurement.
+<!-- /keep:preregistration-settings -->
+
 *Not run yet.* The bar above was fixed before the comparison existed.

@@ -1,0 +1,110 @@
+{
+  "tag": "explainer",
+  "model_tag": "full",
+  "model": "discrete_hazard",
+  "n_applicants": 1000,
+  "threshold": 0.3,
+  "horizon_months": 36,
+  "nsamples": 600,
+  "n_background": 100,
+  "bars": {
+    "E1_top1_agreement": 0.9,
+    "E2_mean_top4_overlap": 0.75
+  },
+  "treeshap_vs_survshap": {
+    "n": 1000,
+    "top1_agreement": 0.802,
+    "mean_top4_overlap": 0.8385,
+    "median_top4_overlap": 0.75,
+    "exact_top4_set_match": 0.412,
+    "no_reasons_either_side": 0
+  },
+  "E1_pass": false,
+  "E2_pass": true,
+  "verdict": "FAIL",
+  "reference_ceiling_survshap_vs_itself": {
+    "n": 300,
+    "top1_agreement": 0.9533333333333334,
+    "mean_top4_overlap": 0.9358333333333333,
+    "median_top4_overlap": 1.0,
+    "exact_top4_set_match": 0.7566666666666667,
+    "no_reasons_either_side": 0
+  },
+  "seconds": {
+    "treeshap_total": 6.72,
+    "treeshap_per_applicant_ms": 6.717,
+    "survshap_total": 2557.2,
+    "survshap_per_applicant_s": 2.557
+  },
+  "projected_100k_rejected": {
+    "treeshap_minutes": 11.2,
+    "survshap_hours": 71.0
+  },
+  "provenance": {
+    "stage": "03d_explainer_validation",
+    "created_at": "2026-09-23T16:54:06+00:00",
+    "code": {
+      "commit": "e734a8e1e427624996435c60ffb3105718ad8363",
+      "code_dirty": true,
+      "dirty_files": [
+        "scripts/03e_feature_ablation.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4177,
+      "mtime": "2026-09-23T16:00:24+00:00",
+      "sha256": "7e2fa1c0bdfc695555f3d47d77a430fdb8e7a4a18172364d18027645d1d29bff"
+    },
+    "args": {
+      "tag": "explainer",
+      "model_tag": "full",
+      "n_explain": 1000,
+      "n_ceiling": 300,
+      "threshold": 0.3
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      },
+      "model": {
+        "path": "outputs/models/02_models_full.pkl",
+        "exists": true,
+        "bytes": 44707986,
+        "mtime": "2026-09-21T15:12:53+00:00",
+        "sha256": "ef842a444611cb628f101ecf4304efaa131c0334fa6d48070415ac3be612f60c"
+      }
+    },
+    "outputs": {
+      "result": {
+        "path": "outputs/tables/03d_explainer_validation_explainer.json",
+        "exists": false
+      },
+      "per_applicant": {
+        "path": "outputs/tables/03d_explainer_per_applicant_explainer.csv",
+        "exists": true,
+        "bytes": 435981,
+        "mtime": "2026-09-23T16:54:06+00:00",
+        "sha256": "77a6f5e49d75aa1a46eded9476f9cfb712fb34bfb8b16af4182911e96906c33f"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}
