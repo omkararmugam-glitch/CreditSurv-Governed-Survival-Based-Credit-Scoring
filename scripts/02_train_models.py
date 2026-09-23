@@ -33,7 +33,9 @@ from creditsurv.cleaning import (  # noqa: E402
 )
 from creditsurv.config import load_config  # noqa: E402
 from creditsurv.features.build import (  # noqa: E402
+    FeatureSpec,
     build_design_matrix,
+    add_derived_features,
     default_spec,
     train_test_split_loans,
     validation_split,
@@ -64,6 +66,20 @@ def main() -> int:
     ap.add_argument("--config", default="config/config.yaml")
     ap.add_argument("--full", action="store_true",
                     help="use the full labelled dataset instead of the dev sample")
+    ap.add_argument("--with-derived", action="store_true",
+                    help="include the derived origination features -- fico_midpoint, "
+                         "emp_length_years, installment_to_income, loan_to_income, "
+                         "log_annual_inc -- by building the feature spec AFTER they "
+                         "are computed. Without this flag the spec is built from the "
+                         "raw columns, so the derived features are absent (see "
+                         "FINDINGS section 7c). Off by default: turning it on changes "
+                         "the model's inputs, so it belongs to a new --tag.")
+    ap.add_argument("--drop-features", default=None,
+                    help="comma-separated features to remove from the spec, e.g. "
+                         "'installment,installment_to_income' for a model that has "
+                         "not seen the lender's assigned rate, or 'addr_state' for "
+                         "one that has not seen geography. Dropped names are recorded "
+                         "in the metrics JSON.")
     ap.add_argument("--with-lc-grade", action="store_true",
                     help="benchmark variant including LC grade / sub_grade / int_rate")
     ap.add_argument("--split", default="random", choices=["random", "out_of_time"])
@@ -133,7 +149,28 @@ def main() -> int:
           f"{df.memory_usage(deep=True).sum() / 1e9:.2f} GB")
 
     with_grade = args.with_lc_grade or cfg.model.with_lc_grade
-    spec = default_spec(df.columns, extended=True, with_lc_grade=with_grade)
+    # The spec is normally built from the raw columns, which is why the derived
+    # features are not in it. --with-derived builds it from the derived frame
+    # instead; the design matrix derives them either way, so the only difference is
+    # whether the spec names them.
+    spec_columns = (add_derived_features(df.head(1)).columns if args.with_derived
+                    else df.columns)
+    spec = default_spec(spec_columns, extended=True, with_lc_grade=with_grade)
+    dropped_by_request: list[str] = []
+    if args.drop_features:
+        wanted = [c.strip() for c in args.drop_features.split(",") if c.strip()]
+        unknown = [c for c in wanted if c not in spec.all_columns]
+        if unknown:
+            print(f"ERROR: --drop-features names {unknown}, which are not in the "
+                  f"feature spec. Nothing has been run.", file=sys.stderr)
+            return 2
+        dropped_by_request = wanted
+        spec = FeatureSpec(
+            numeric=tuple(c for c in spec.numeric if c not in wanted),
+            categorical=tuple(c for c in spec.categorical if c not in wanted),
+            structural_missing=tuple(c for c in spec.structural_missing
+                                     if c not in wanted))
+        print(f"  dropped by request: {', '.join(wanted)}")
     print(f"  features: {len(spec.numeric)} numeric + {len(spec.categorical)} categorical"
           f"{'  (INCLUDING LC grade -- benchmark variant)' if with_grade else ''}")
 
@@ -402,6 +439,8 @@ def main() -> int:
         "time_bin_months": int(args.time_bin or cfg.model.time_bin_months),
         "negative_subsample": float(args.negative_subsample),
         "with_lc_grade": bool(with_grade),
+        "with_derived": bool(args.with_derived),
+        "dropped_by_request": dropped_by_request,
         "n_train": int(len(train_idx)),
         "n_test": int(len(test_idx)),
         "eval_horizons": [int(t) for t in times],

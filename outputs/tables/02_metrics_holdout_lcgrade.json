@@ -1,0 +1,361 @@
+{
+  "source": "outputs\\data\\accepted_labeled.parquet",
+  "tag": "holdout_lcgrade",
+  "n_rows": 2257790,
+  "split_scheme": "out_of_time",
+  "oot_cutoff": 2016,
+  "train_years": [
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015
+  ],
+  "test_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "ipcw_fitted_on": "test",
+  "early_stopping": {
+    "validation": "random 10% of training loans",
+    "n_fit": 796198,
+    "n_val": 88466,
+    "trees": 327,
+    "best_iteration": 327
+  },
+  "data_source": "outputs/data/accepted_labeled.parquet",
+  "results_by_vintage": {
+    "cox": {
+      "2016": {
+        "model": "cox",
+        "split": "test_2016",
+        "n": 434407,
+        "event_rate": 0.1571,
+        "concordance": 0.696,
+        "ibs": 0.1091,
+        "auc_6m": 0.7206,
+        "auc_12m": 0.7171,
+        "auc_18m": 0.7131,
+        "auc_24m": 0.7102,
+        "auc_30m": 0.7109,
+        "auc_36m": 0.6523,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 392363,
+          "12": 336742,
+          "18": 278765,
+          "24": 225345,
+          "30": 125539,
+          "36": 11287
+        }
+      },
+      "2017": {
+        "model": "cox",
+        "split": "test_2017",
+        "n": 443579,
+        "event_rate": 0.0883,
+        "concordance": 0.6902,
+        "ibs": 0.0714,
+        "auc_6m": 0.7029,
+        "auc_12m": 0.6981,
+        "auc_18m": 0.6925,
+        "auc_24m": 0.6843,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 397062,
+          "12": 338988,
+          "18": 179210,
+          "24": 29887
+        }
+      },
+      "2018": {
+        "model": "cox",
+        "split": "test_2018",
+        "n": 495140,
+        "event_rate": 0.0179,
+        "concordance": 0.6814,
+        "ibs": 0.0223,
+        "auc_6m": 0.6855,
+        "auc_12m": 0.6912,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 296046,
+          "12": 53628
+        }
+      }
+    },
+    "discrete_hazard": {
+      "2016": {
+        "model": "discrete_hazard",
+        "split": "test_2016",
+        "n": 434407,
+        "event_rate": 0.1571,
+        "concordance": 0.7055,
+        "ibs": 0.1081,
+        "auc_6m": 0.7433,
+        "auc_12m": 0.7313,
+        "auc_18m": 0.7238,
+        "auc_24m": 0.72,
+        "auc_30m": 0.7201,
+        "auc_36m": 0.6527,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 392363,
+          "12": 336742,
+          "18": 278765,
+          "24": 225345,
+          "30": 125539,
+          "36": 11287
+        }
+      },
+      "2017": {
+        "model": "discrete_hazard",
+        "split": "test_2017",
+        "n": 443579,
+        "event_rate": 0.0883,
+        "concordance": 0.7114,
+        "ibs": 0.07,
+        "auc_6m": 0.739,
+        "auc_12m": 0.7261,
+        "auc_18m": 0.7204,
+        "auc_24m": 0.7142,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 397062,
+          "12": 338988,
+          "18": 179210,
+          "24": 29887
+        }
+      },
+      "2018": {
+        "model": "discrete_hazard",
+        "split": "test_2018",
+        "n": 495140,
+        "event_rate": 0.0179,
+        "concordance": 0.7292,
+        "ibs": 0.0219,
+        "auc_6m": 0.736,
+        "auc_12m": 0.7326,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 296046,
+          "12": 53628
+        }
+      }
+    }
+  },
+  "time_bin_months": 3,
+  "negative_subsample": 0.4,
+  "with_lc_grade": true,
+  "n_train": 884664,
+  "n_test": 1373126,
+  "eval_horizons": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "features": {
+    "numeric": [
+      "loan_amnt",
+      "installment",
+      "annual_inc",
+      "dti",
+      "open_acc",
+      "total_acc",
+      "revol_bal",
+      "revol_util",
+      "mort_acc",
+      "delinq_2yrs",
+      "inq_last_6mths",
+      "pub_rec",
+      "pub_rec_bankruptcies",
+      "tax_liens",
+      "acc_now_delinq",
+      "delinq_amnt",
+      "chargeoff_within_12_mths",
+      "collections_12_mths_ex_med",
+      "mths_since_last_delinq",
+      "mths_since_last_record",
+      "mths_since_last_major_derog",
+      "tot_coll_amt",
+      "tot_cur_bal",
+      "total_rev_hi_lim",
+      "acc_open_past_24mths",
+      "avg_cur_bal",
+      "bc_open_to_buy",
+      "bc_util",
+      "mo_sin_old_il_acct",
+      "mo_sin_old_rev_tl_op",
+      "mo_sin_rcnt_rev_tl_op",
+      "mo_sin_rcnt_tl",
+      "mths_since_recent_bc",
+      "mths_since_recent_bc_dlq",
+      "mths_since_recent_inq",
+      "mths_since_recent_revol_delinq",
+      "num_accts_ever_120_pd",
+      "num_actv_bc_tl",
+      "num_actv_rev_tl",
+      "num_bc_sats",
+      "num_bc_tl",
+      "num_il_tl",
+      "num_op_rev_tl",
+      "num_rev_accts",
+      "num_rev_tl_bal_gt_0",
+      "num_sats",
+      "num_tl_30dpd",
+      "num_tl_90g_dpd_24m",
+      "num_tl_op_past_12m",
+      "pct_tl_nvr_dlq",
+      "percent_bc_gt_75",
+      "tot_hi_cred_lim",
+      "total_bal_ex_mort",
+      "total_bc_limit",
+      "total_il_high_credit_limit",
+      "int_rate"
+    ],
+    "categorical": [
+      "purpose",
+      "home_ownership",
+      "verification_status",
+      "addr_state",
+      "application_type",
+      "initial_list_status",
+      "grade",
+      "sub_grade"
+    ]
+  },
+  "results": [
+    {
+      "model": "cox",
+      "split": "test",
+      "n": 1373126,
+      "event_rate": 0.0847,
+      "concordance": 0.7006,
+      "ibs": 0.099,
+      "auc_6m": 0.7062,
+      "auc_12m": 0.7021,
+      "auc_18m": 0.6951,
+      "auc_24m": 0.689,
+      "auc_30m": 0.6908,
+      "auc_36m": 0.6321,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 1085471,
+        "12": 729358,
+        "18": 457975,
+        "24": 255232,
+        "30": 125539,
+        "36": 11287
+      }
+    },
+    {
+      "model": "discrete_hazard",
+      "split": "test",
+      "n": 1373126,
+      "event_rate": 0.0847,
+      "concordance": 0.7158,
+      "ibs": 0.0978,
+      "auc_6m": 0.7406,
+      "auc_12m": 0.7264,
+      "auc_18m": 0.7168,
+      "auc_24m": 0.7092,
+      "auc_30m": 0.7087,
+      "auc_36m": 0.6403,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 1085471,
+        "12": 729358,
+        "18": 457975,
+        "24": 255232,
+        "30": 125539,
+        "36": 11287
+      }
+    }
+  ],
+  "provenance": {
+    "stage": "02_train_models",
+    "created_at": "2026-09-23T17:06:19+00:00",
+    "code": {
+      "commit": "2ff6525318c622477a1d4e9fec7b160042cd4154",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4177,
+      "mtime": "2026-09-23T16:00:24+00:00",
+      "sha256": "7e2fa1c0bdfc695555f3d47d77a430fdb8e7a4a18172364d18027645d1d29bff"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "full": true,
+      "with_lc_grade": true,
+      "split": "out_of_time",
+      "oot_cutoff": 2016,
+      "val_frac": 0.1,
+      "time_bin": 3,
+      "negative_subsample": 0.4,
+      "cox_max_rows": 300000,
+      "skip_cox": false,
+      "skip_gbm": false,
+      "tag": "holdout",
+      "overwrite": false
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      }
+    },
+    "outputs": {
+      "model": {
+        "path": "outputs/models/02_models_holdout_lcgrade.pkl",
+        "exists": true,
+        "bytes": 42886462,
+        "mtime": "2026-09-23T17:06:19+00:00",
+        "sha256": "faff035466fae40a0b7a55b2adc83dce846e9e6554dd94e5f4e1222cc8323c28"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

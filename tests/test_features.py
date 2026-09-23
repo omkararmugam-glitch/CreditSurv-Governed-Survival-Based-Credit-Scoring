@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from creditsurv.features.build import (
+    FeatureSpec,
     STRUCTURAL_MISSING,
     add_derived_features,
     build_design_matrix,
@@ -240,3 +241,62 @@ class TestSplit:
     def test_unknown_scheme_rejected(self, synthetic_survival_frame):
         with pytest.raises(ValueError, match="unknown scheme"):
             train_test_split_loans(synthetic_survival_frame, scheme="kfold")
+
+
+class TestSpecFlagsForVariantModels:
+    """The Stage 2 flags that make an unpriced or score-aware variant possible.
+
+    Both must leave the default spec untouched: the models in sections 2-7b were
+    fitted on it, and a silent change here would make those results describe a
+    model nobody trained.
+    """
+
+    def _frame(self):
+        import numpy as np
+        return pd.DataFrame({
+            "loan_amnt": [10000.0, 20000.0], "installment": [300.0, 600.0],
+            "annual_inc": [60000.0, 90000.0], "dti": [12.0, 20.0],
+            "fico_range_low": [700.0, 660.0], "fico_range_high": [704.0, 664.0],
+            "emp_length": ["5 years", "10+ years"], "open_acc": [5.0, 9.0],
+            "revol_bal": [1000.0, 2000.0], "purpose": ["car", "car"],
+            "home_ownership": ["RENT", "OWN"], "addr_state": ["CA", "TX"],
+            "verification_status": ["Verified", "Verified"],
+            "application_type": ["Individual", "Individual"],
+            "initial_list_status": ["w", "w"],
+        })
+
+    def test_default_spec_excludes_the_derived_features(self):
+        """Documents the defect recorded in FINDINGS 7c rather than hiding it."""
+        spec = default_spec(self._frame().columns)
+        for col in ("fico_midpoint", "emp_length_years", "installment_to_income",
+                    "loan_to_income", "log_annual_inc"):
+            assert col not in spec.all_columns
+        assert "fico_range_low" not in spec.all_columns      # dropped as superseded
+
+    def test_building_the_spec_after_deriving_recovers_them(self):
+        df = self._frame()
+        spec = default_spec(add_derived_features(df).columns)
+        for col in ("fico_midpoint", "emp_length_years", "installment_to_income",
+                    "loan_to_income", "log_annual_inc"):
+            assert col in spec.numeric
+        # And the design matrix built from it actually carries the score.
+        df["duration_months"], df["event"] = [12, 24], [0, 1]
+        dm = build_design_matrix(df, spec, flavour="gbm")
+        assert "fico_midpoint" in dm.X.columns
+        assert dm.X["fico_midpoint"].tolist() == [702.0, 662.0]
+
+    def test_an_unpriced_spec_keeps_the_score_and_loses_the_rate(self):
+        """What --with-derived --drop-features installment,installment_to_income
+        produces: nothing computed from the lender's assigned rate."""
+        spec = default_spec(add_derived_features(self._frame()).columns)
+        wanted = ("installment", "installment_to_income")
+        unpriced = FeatureSpec(
+            numeric=tuple(c for c in spec.numeric if c not in wanted),
+            categorical=spec.categorical,
+            structural_missing=tuple(c for c in spec.structural_missing
+                                     if c not in wanted))
+        assert "fico_midpoint" in unpriced.numeric
+        assert not set(wanted) & set(unpriced.all_columns)
+        assert "loan_amnt" in unpriced.numeric          # the amount is not pricing
+        for lender_field in ("grade", "sub_grade", "int_rate"):
+            assert lender_field not in unpriced.all_columns

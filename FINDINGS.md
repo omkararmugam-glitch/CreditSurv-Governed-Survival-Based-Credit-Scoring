@@ -827,6 +827,77 @@ batch membership; bulk runs explain every rejected applicant rather than a cappe
 subset; the run is resumable and reports time remaining; and the
 `reasons not generated` marker means only that a run was stopped early.
 
+## 7b. What Lending Club's own pricing adds
+
+Both models trained on the full labelled dataset with the out-of-time split
+(train 884,664 loans from 2007-2015,
+test 1,373,126 from 2016-2018), quarterly bins,
+identical in every respect except the feature set. `holdout_lcgrade` adds `grade`,
+`sub_grade` and `int_rate`; `holdout_nograde` is the primary specification.
+
+| model | with grade / rate | primary (no grade) | gap |
+|---|---|---|---|
+| discrete hazard, concordance | **0.7158** | 0.6936 | 0.0222 |
+| Cox, concordance | **0.7006** | 0.6602 | 0.0404 |
+| discrete hazard, 12-month AUC | 0.7264 | 0.7025 | 0.0239 |
+| discrete hazard, 36-month AUC | 0.6403 | 0.6417 | -0.0014 |
+| discrete hazard, IBS (lower better) | 0.0978 | 0.0992 | -0.0014 |
+
+**Lending Club's grade and rate are worth about 0.022 concordance to the tree model
+and 0.040 to Cox.** That is the largest single feature effect measured anywhere in
+this project -- bigger than the whole account-counts block, and roughly two thirds
+of the gap between the primary model and a coin flip's distance from it. The
+exclusion decided in section 0 therefore costs real accuracy, and saying so is the
+point of measuring it.
+
+Three things the table says beyond the headline:
+
+* **Cox gains twice as much as the tree model** (0.040 against 0.022). `grade` is an
+  ordinal summary of exactly the interactions a linear model cannot express and a
+  GBM partly recovers on its own, so the benchmark flatters the weaker learner.
+* **The gain is concentrated early.** At 12 months the tree model gains
+  0.0239 AUC; at 36 months it gains
+  -0.0014 -- nothing, or very
+  slightly negative. Lending Club's pricing sorts who defaults *soon*; over a full
+  term the primary features catch up. A single-number concordance hides that, which
+  is the argument for the time-dependent view this project is built on.
+* **The exclusion is still right, for reasons accuracy cannot settle.** `grade` is
+  another model's output, so including it means partly predicting Lending Club's
+  underwriter rather than default, and a notice whose principal reason is "your
+  grade" is exactly the disclosure Regulation B's commentary forbids
+  (section 3(b)). The cost is now measured rather than assumed, and it is the price
+  of a model whose reasons can be disclosed.
+
+## 7c. The credit score is missing from every model, and that is a defect
+
+`fico_range_low` and `fico_range_high` are present on every accepted loan, are
+pre-decision applicant facts, and are lawful to disclose -- FCRA 615(a) expects the
+score and its key factors in an adverse-action notice, and this project's notice
+template has a slot for them. They are in **no** trained model.
+
+The cause is not a decision. `default_spec` drops the two raw FICO bounds as
+superseded by `fico_midpoint`, and it is called on the *raw* columns, before
+`add_derived_features` computes `fico_midpoint`. The intersection with "columns
+actually present" then removes it, silently. The same bug removes
+`emp_length_years`, `installment_to_income`, `loan_to_income` and `log_annual_inc`.
+So five features -- including the single most standard credit-risk variable there
+is -- were dropped by an ordering mistake, and the results in sections 2, 3, 6 and
+7b were all produced without them.
+
+Consequences worth stating plainly:
+
+* Section 7b's measured cost of excluding `grade` is an **upper bound on what the
+  exclusion costs a competent model**: some of what `grade` contributes is FICO,
+  which the primary model never had either. A fair benchmark would give both sides
+  the score.
+* Every notice's FCRA score block reports a FICO the model never used.
+* The ablation in section 7d cannot speak for a feature that was not in the model.
+
+Stage 2 now takes `--with-derived`, which builds the spec after the derived features
+exist. It is **off by default**: turning it on changes the model's inputs, so it
+belongs to a new tag and a retrain, not to a silent correction of existing results.
+`--drop-features` was added alongside it for the unpriced variants in 7e.
+
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
 <!-- keep:preregistration-settings -->
