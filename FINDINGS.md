@@ -755,6 +755,25 @@ stated reasons is a compliance gap whatever the reason for it. So in that case:
   stopped before it finished**. Rows that were never reached keep the marker and are
   counted, so a partial file is never mistaken for a complete one.
 
+**If the failure branch is taken, the long run must survive interruption.** A
+76-hour explanation pass that loses everything to a reboot is not usable, so two
+further requirements are recorded here, to be built **only if the primary verdict
+is a fail**:
+
+* **Resumable.** Explained rows are appended to disk as each one finishes, keyed by
+  `row_id` and `applicant_id`, rather than held until the end. On restart the run
+  reads that ledger and skips rows already explained. What makes this safe rather
+  than merely convenient is the seeding: with each call seeded from the row id, a
+  resumed run produces *identical* reasons to an uninterrupted one, which a test
+  must assert by explaining a file, killing it part-way, resuming, and comparing
+  the result with a single uninterrupted pass row by row.
+* **Sleep.** The run asks Windows to keep the machine awake for its duration
+  (`SetThreadExecutionState` with `ES_CONTINUOUS | ES_SYSTEM_REQUIRED` through
+  ctypes, which needs no elevation), releases that request when it ends including
+  on failure, and records in the log whether the request was granted. It does not
+  prevent a deliberate sleep or a closed lid, so the page says plainly that sleep
+  pauses a run and that a paused run resumes where it stopped.
+
 This is the recorded plan for the failure branch, chosen before the result was
 known.
 <!-- /keep:preregistration-explainer -->
