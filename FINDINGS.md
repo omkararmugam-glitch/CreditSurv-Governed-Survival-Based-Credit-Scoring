@@ -1202,6 +1202,133 @@ file" or which inputs a derivation would have needed -- for example
 `Recognised: open_credit_lines -> open_acc` and
 `Missing: revol_bal (not in file); installment (needs int_rate)`.
 
+## 7h. A Cox fit that ranked no better than a coin, and why nothing caught it
+
+`holdout_applicant` and `holdout_applicant_nogeo` were trained, evaluated and saved
+with Cox test concordances of **0.502**, against 0.6767 for `holdout_derived` on almost
+the same feature set. 0.502 is not a weak model; it is no model. Their metrics files
+looked like results.
+
+**Symptom.** The saved coefficient tables hold log hazard ratios of **-385.6**
+(`addr_state_ID`) and **-375.8** (`application_type_Joint App`), hazard ratios of
+1e-168, and p-values of exactly 0. For comparison, the largest coefficient in every
+other model this project has fitted is 3.1.
+
+**Cause, reproduced.** Refitting the exact failing configuration -- same 300,000-row
+Cox subsample, same seed, same split -- gives max |coef| 458 and test concordance
+0.4970, with lifelines reporting *"Newton-Raphson failed to converge sufficiently"*.
+Two things combine:
+
+1. **Levels too rare to estimate.** In the 2007-2015 training window, `addr_state_ID`
+   has **3 loans and 1 default**, `home_ownership_NONE` 13 loans and 2 defaults,
+   `application_type_Joint App` 179 loans and 28 defaults (joint applications barely
+   existed before 2015). The partial likelihood is nearly flat along those directions,
+   and Newton-Raphson walks a long way along a flat direction.
+2. **A ridge that weakens as data is added.** lifelines adds the penalty to the
+   *summed* partial log-likelihood, not the mean, so a fixed `penalizer` is
+   proportionally weaker on more rows. The same design matrix fitted cleanly on 60,000
+   rows (max |coef| 2.3) and ran away on 300,000. **The 0.01 penalizer was too weak,
+   and had been all along.**
+
+**Why only these two models.** `holdout_derived` differs only by keeping `installment`
+and `installment_to_income`. That changed the Hessian enough to stop the Newton
+iteration before it diverged. Its 0.6767 was luck, not health: every Cox model in this
+project was fitted next to this cliff, and the published ones happened to land on the
+right side of it. Their coefficients are sane (max 3.1) and their results stand, but
+they were not protected by anything.
+
+**Measurements, 300,000-row fit, 200,000 held-out loans.**
+
+| configuration | max abs coef | test concordance | converged |
+|---|---|---|---|
+| as shipped, penalizer 0.01 | 458.1 | **0.4970** | no |
+| pool levels with < 25 events, 0.01 | 393.8 | 0.4978 | no |
+| pool levels with < 100 events, 0.01 | 0.59 | 0.6733 | yes |
+| all levels, penalizer 0.05 | 1.66 | 0.6602 | yes |
+| all levels, penalizer 0.1 | 1.34 | 0.6596 | yes |
+| all levels, penalizer 1.0 | 0.24 | 0.6555 | yes |
+| **both fixes, as now shipped** | **0.54** | **0.6708** | **yes** |
+
+Pooling at 25 events is not enough -- 28 events is still too few -- which is why the
+threshold is 100.
+
+**The fix, in three parts.**
+
+* **A one-hot level with fewer than 100 events is pooled into the reference level**
+  rather than given its own coefficient (`MIN_EVENTS_PER_LEVEL`), and each pooled level
+  is named in the design matrix's `dropped` record. 100 is roughly where the standard
+  error of a log hazard ratio falls below 0.2; the precise figure matters far less than
+  it not being 3. The rule is switched off below 2,000 events in total, where it could
+  not mean anything, and it is applied on the training split only -- a test split
+  reindexes to the columns training kept, so the two matrices cannot drift apart.
+* **The default ridge is 0.05, not 0.01.** Measured, not guessed: 0.05 converges with
+  every level retained, and on the pre-registered holdout spec it reproduces the
+  published Cox concordance of 0.6602 to four decimal places.
+* **Stage 2 refuses to save a model that does not rank.** A test concordance within
+  **0.02** of 0.5, or a non-finite one, or a Cox fit whose largest coefficient exceeds
+  10 in absolute value, ends the run with exit code 5 and writes no bundle and no
+  metrics file. exp(10) is a hazard ratio of 22,000; nothing in consumer credit
+  multiplies default risk twenty-thousand-fold.
+
+**This is a Cox-only fix.** The gradient-boosted model handles a rare category
+natively and its design matrix is untouched, so **every published GBM number stands
+unchanged** -- including the five concordances in 7i. Only the Cox baseline moves, and
+only when refitted.
+
+**One consequence to state.** Refitting the pre-registered holdout under the fix gives
+Cox concordance **0.6664**, against the published **0.6602**. The published figure is
+what was computed and is not edited; a future refit will differ, and it differs
+upwards, because the 13 pooled levels were adding noise rather than signal. No result
+in this document has been changed on the strength of that.
+
+The two degenerate models are **not** trusted: their Cox numbers are withdrawn and
+must not be cited. Their GBM numbers (0.6938 and 0.6927) come from a separate,
+converged fit and are sound. Retraining them under the fix replaces both.
+
+## 7i. What five models measured: the score is worth about as much as the price
+
+All five are full-data out-of-time holdouts (train 2007-2015, test 2016-2018,
+quarterly bins, negative subsampling 0.4), differing only in their feature sets.
+Gradient-boosted discrete-time hazard, which is the model the application scores with.
+
+| tag | what it has | concordance | 12-month AUC | vs no-grade |
+|---|---|---|---|---|
+| `holdout_lcgrade` | Lending Club's grade and pricing | **0.7158** | 0.7264 | +0.0222 |
+| `holdout_derived` | credit score, employment length, term, instalment | 0.7028 | 0.7144 | +0.0092 |
+| `holdout_applicant` | credit score, employment length, term, **no pricing** | 0.6938 | 0.7032 | +0.0002 |
+| `holdout_nograde` | the published primary specification | 0.6936 | 0.7025 | -- |
+| `holdout_applicant_nogeo` | as `holdout_applicant`, without `addr_state` | 0.6927 | 0.7022 | -0.0009 |
+
+Three numbers worth stating plainly.
+
+**The 7c defect cost about 0.009 concordance.** `holdout_derived` is the first model
+with a credit score, an employment length and a loan term, and it scores 0.7028 against
+0.6936 for the same specification without them: **+0.0092 concordance, +0.0119
+12-month AUC**. That is what the ordering defect in 7c has been costing every result in
+this document. It is a real loss and a modest one -- the 50-odd bureau variables the
+model does have carry much of what a FICO score summarises -- which is worth knowing in
+both directions: the defect was not catastrophic, and fixing it is not a substitute for
+the pricing information in 7b.
+
+**An unpriced model matches the published one.** `holdout_applicant` has no
+`installment` and no `installment_to_income` -- nothing derived from the lender's own
+pricing -- and scores **0.6938 against 0.6936**: a gap of 0.0002, which is noise. The
+arithmetic behind that near-equality is worth seeing, because it is a coincidence of
+two real effects: dropping the instalment costs 0.0090 (0.7028 to 0.6938) and adding
+the score and employment length gains 0.0092. **So the answer to "can this system score
+a genuinely unpriced applicant?" is now yes, at no measurable cost** -- provided the
+applicant brings a credit score, which is exactly the trade this table makes.
+
+**Dropping `addr_state` costs 0.0011 concordance**, not the 0.0039 that 7d's ablation
+reported. Both numbers are right and they answer different questions. The ablation
+measures what happens when a model that *was trained with* geography has it withheld at
+scoring time: 0.0039. Retraining without it lets the other 58 features absorb most of
+what geography was carrying, leaving **0.0011**. For a lender deciding whether to
+collect a field, the retrained figure is the relevant one; for a scoring run that meets
+a file with the column missing, the ablation figure is. A model with no geography at all
+is also the easier one to defend under fair lending, and 0.0011 concordance is a very
+small price for removing that argument.
+
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
 <!-- keep:preregistration-settings -->
@@ -1253,5 +1380,15 @@ candidate that agrees with the full settings agrees with *one draw* of them. The
 7.1 ceiling bounds how much of any gap is noise; it does not remove the noise from
 this measurement.
 <!-- /keep:preregistration-settings -->
+
+**Which model the answer belongs to.** The comparison is defined against one model's
+explanations, so its result is that model's. This follows the rule section 6 already
+fixed for the noise floor -- "the floor from section 3 belongs to a different model and
+is not reused" -- and it applies for the same reason: how many coalition samples a
+Shapley estimate needs depends on the response surface being explained, not on the
+method alone. A model with a different feature set gets its own run of the comparison
+before cheaper settings are adopted for it. Practically, that means the comparison is
+worth running **after** the scoring model is chosen (7i), not before, or it is paid for
+twice.
 
 *Not run yet.* The bar above was fixed before the comparison existed.
