@@ -1,0 +1,372 @@
+{
+  "source": "outputs\\data\\accepted_labeled.parquet",
+  "tag": "holdout_derived",
+  "n_rows": 2257790,
+  "split_scheme": "out_of_time",
+  "oot_cutoff": 2016,
+  "train_years": [
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015
+  ],
+  "test_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "ipcw_fitted_on": "test",
+  "early_stopping": {
+    "validation": "random 10% of training loans",
+    "n_fit": 796198,
+    "n_val": 88466,
+    "trees": 585,
+    "best_iteration": 585
+  },
+  "data_source": "outputs/data/accepted_labeled.parquet",
+  "results_by_vintage": {
+    "cox": {
+      "2016": {
+        "model": "cox",
+        "split": "test_2016",
+        "n": 434407,
+        "event_rate": 0.1571,
+        "concordance": 0.6775,
+        "ibs": 0.1112,
+        "auc_6m": 0.6861,
+        "auc_12m": 0.6893,
+        "auc_18m": 0.6903,
+        "auc_24m": 0.6897,
+        "auc_30m": 0.6857,
+        "auc_36m": 0.6294,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 392363,
+          "12": 336742,
+          "18": 278765,
+          "24": 225345,
+          "30": 125539,
+          "36": 11287
+        }
+      },
+      "2017": {
+        "model": "cox",
+        "split": "test_2017",
+        "n": 443579,
+        "event_rate": 0.0883,
+        "concordance": 0.667,
+        "ibs": 0.0726,
+        "auc_6m": 0.6699,
+        "auc_12m": 0.6711,
+        "auc_18m": 0.6674,
+        "auc_24m": 0.6619,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 397062,
+          "12": 338988,
+          "18": 179210,
+          "24": 29887
+        }
+      },
+      "2018": {
+        "model": "cox",
+        "split": "test_2018",
+        "n": 495140,
+        "event_rate": 0.0179,
+        "concordance": 0.6426,
+        "ibs": 0.0228,
+        "auc_6m": 0.6467,
+        "auc_12m": 0.6573,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 296046,
+          "12": 53628
+        }
+      }
+    },
+    "discrete_hazard": {
+      "2016": {
+        "model": "discrete_hazard",
+        "split": "test_2016",
+        "n": 434407,
+        "event_rate": 0.1571,
+        "concordance": 0.6978,
+        "ibs": 0.109,
+        "auc_6m": 0.7324,
+        "auc_12m": 0.7195,
+        "auc_18m": 0.7142,
+        "auc_24m": 0.7114,
+        "auc_30m": 0.7086,
+        "auc_36m": 0.6451,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 392363,
+          "12": 336742,
+          "18": 278765,
+          "24": 225345,
+          "30": 125539,
+          "36": 11287
+        }
+      },
+      "2017": {
+        "model": "discrete_hazard",
+        "split": "test_2017",
+        "n": 443579,
+        "event_rate": 0.0883,
+        "concordance": 0.6996,
+        "ibs": 0.0705,
+        "auc_6m": 0.723,
+        "auc_12m": 0.7121,
+        "auc_18m": 0.7109,
+        "auc_24m": 0.7099,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 397062,
+          "12": 338988,
+          "18": 179210,
+          "24": 29887
+        }
+      },
+      "2018": {
+        "model": "discrete_hazard",
+        "split": "test_2018",
+        "n": 495140,
+        "event_rate": 0.0179,
+        "concordance": 0.7135,
+        "ibs": 0.0224,
+        "auc_6m": 0.7208,
+        "auc_12m": 0.7184,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 296046,
+          "12": 53628
+        }
+      }
+    }
+  },
+  "time_bin_months": 3,
+  "negative_subsample": 0.4,
+  "with_lc_grade": false,
+  "with_derived": true,
+  "added_by_request": [
+    "term_months"
+  ],
+  "dropped_by_request": [],
+  "n_train": 884664,
+  "n_test": 1373126,
+  "eval_horizons": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "features": {
+    "numeric": [
+      "loan_amnt",
+      "installment",
+      "annual_inc",
+      "dti",
+      "open_acc",
+      "total_acc",
+      "revol_bal",
+      "revol_util",
+      "mort_acc",
+      "delinq_2yrs",
+      "inq_last_6mths",
+      "pub_rec",
+      "pub_rec_bankruptcies",
+      "tax_liens",
+      "acc_now_delinq",
+      "delinq_amnt",
+      "chargeoff_within_12_mths",
+      "collections_12_mths_ex_med",
+      "mths_since_last_delinq",
+      "mths_since_last_record",
+      "mths_since_last_major_derog",
+      "tot_coll_amt",
+      "tot_cur_bal",
+      "total_rev_hi_lim",
+      "acc_open_past_24mths",
+      "avg_cur_bal",
+      "bc_open_to_buy",
+      "bc_util",
+      "mo_sin_old_il_acct",
+      "mo_sin_old_rev_tl_op",
+      "mo_sin_rcnt_rev_tl_op",
+      "mo_sin_rcnt_tl",
+      "mths_since_recent_bc",
+      "mths_since_recent_bc_dlq",
+      "mths_since_recent_inq",
+      "mths_since_recent_revol_delinq",
+      "num_accts_ever_120_pd",
+      "num_actv_bc_tl",
+      "num_actv_rev_tl",
+      "num_bc_sats",
+      "num_bc_tl",
+      "num_il_tl",
+      "num_op_rev_tl",
+      "num_rev_accts",
+      "num_rev_tl_bal_gt_0",
+      "num_sats",
+      "num_tl_30dpd",
+      "num_tl_90g_dpd_24m",
+      "num_tl_op_past_12m",
+      "pct_tl_nvr_dlq",
+      "percent_bc_gt_75",
+      "tot_hi_cred_lim",
+      "total_bal_ex_mort",
+      "total_bc_limit",
+      "total_il_high_credit_limit",
+      "fico_midpoint",
+      "emp_length_years",
+      "installment_to_income",
+      "loan_to_income",
+      "log_annual_inc",
+      "term_months"
+    ],
+    "categorical": [
+      "purpose",
+      "home_ownership",
+      "verification_status",
+      "addr_state",
+      "application_type",
+      "initial_list_status"
+    ]
+  },
+  "results": [
+    {
+      "model": "cox",
+      "split": "test",
+      "n": 1373126,
+      "event_rate": 0.0847,
+      "concordance": 0.6767,
+      "ibs": 0.1009,
+      "auc_6m": 0.6715,
+      "auc_12m": 0.6746,
+      "auc_18m": 0.6712,
+      "auc_24m": 0.6656,
+      "auc_30m": 0.6622,
+      "auc_36m": 0.6073,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 1085471,
+        "12": 729358,
+        "18": 457975,
+        "24": 255232,
+        "30": 125539,
+        "36": 11287
+      }
+    },
+    {
+      "model": "discrete_hazard",
+      "split": "test",
+      "n": 1373126,
+      "event_rate": 0.0847,
+      "concordance": 0.7028,
+      "ibs": 0.0986,
+      "auc_6m": 0.726,
+      "auc_12m": 0.7144,
+      "auc_18m": 0.7087,
+      "auc_24m": 0.7017,
+      "auc_30m": 0.6971,
+      "auc_36m": 0.6333,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 1085471,
+        "12": 729358,
+        "18": 457975,
+        "24": 255232,
+        "30": 125539,
+        "36": 11287
+      }
+    }
+  ],
+  "provenance": {
+    "stage": "02_train_models",
+    "created_at": "2026-09-24T16:10:58+00:00",
+    "code": {
+      "commit": "14d23994843a173db433484fc6d4a0d613985fb4",
+      "code_dirty": false,
+      "dirty_files": []
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4257,
+      "mtime": "2026-09-24T13:48:39+00:00",
+      "sha256": "dc829062b712a7ab86e67fb8df59425a3e0852f788c41dc0d0049ae7892e7551"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "full": true,
+      "with_derived": true,
+      "add_features": "term_months",
+      "drop_features": null,
+      "with_lc_grade": false,
+      "split": "out_of_time",
+      "oot_cutoff": 2016,
+      "val_frac": 0.1,
+      "time_bin": 3,
+      "negative_subsample": 0.4,
+      "cox_max_rows": 300000,
+      "skip_cox": false,
+      "skip_gbm": false,
+      "tag": "holdout_derived",
+      "overwrite": false
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      }
+    },
+    "outputs": {
+      "model": {
+        "path": "outputs/models/02_models_holdout_derived.pkl",
+        "exists": true,
+        "bytes": 44609787,
+        "mtime": "2026-09-24T16:10:58+00:00",
+        "sha256": "d3ebe0e7472ec3a6c21e3e162462a0f8d5988b33307cfbb182a542cf23db5daf"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}
