@@ -1,0 +1,11 @@
+scope,name,n_features,features,concordance,concordance_drop,auc_12m,auc_12m_drop
+group,loan_structure,2,"loan_amnt, installment",0.6644903113795565,0.028220357337175983,0.6721001049059815,0.03243825238658049
+group,income_and_burden,2,"annual_inc, dti",0.6695150576868284,0.023195611029904084,0.6792141448137816,0.02532421247878036
+group,account_counts,14,"open_acc, total_acc, num_sats, num_actv_bc_tl, num_actv_rev_tl, num_bc_sats, num_bc_tl, num_il_tl, num_op_rev_tl, num_rev_accts, num_rev_tl_bal_gt_0, mort_acc, acc_open_past_24mths, num_tl_op_past_12m",0.669653211579647,0.023057457137085513,0.6816527992334394,0.022885558059122624
+group,application_descriptors,5,"purpose, home_ownership, verification_status, application_type, initial_list_status",0.6755009214626603,0.017209747254072205,0.6858865775465677,0.0186517797459943
+group,utilisation,7,"revol_util, bc_util, percent_bc_gt_75, bc_open_to_buy, revol_bal, total_rev_hi_lim, total_bc_limit",0.6759339874771639,0.016776681239568547,0.6909589284560654,0.013579428836496543
+group,recency_months,11,"mths_since_last_delinq, mths_since_last_record, mths_since_last_major_derog, mths_since_recent_bc, mths_since_recent_bc_dlq, mths_since_recent_inq, mths_since_recent_revol_delinq, mo_sin_old_il_acct, mo_sin_old_rev_tl_op, mo_sin_rcnt_rev_tl_op, mo_sin_rcnt_tl",0.6770688519760873,0.01564181674064513,0.6839926142621418,0.020545743030420227
+group,inquiries,2,"inq_last_6mths, mths_since_recent_inq",0.6869876632586861,0.005723005458046382,0.6958787281592781,0.008659629133283886
+group,geography,1,addr_state,0.6888408241036978,0.0038698446130346342,0.6994977841971097,0.00504057309545225
+group,balances_and_limits,6,"tot_cur_bal, avg_cur_bal, tot_hi_cred_lim, total_bal_ex_mort, total_il_high_credit_limit, tot_coll_amt",0.6901765343697811,0.0025341343469513777,0.7020724616939101,0.002465895598651846
+group,delinquency_and_public_record,12,"delinq_2yrs, delinq_amnt, pub_rec, pub_rec_bankruptcies, tax_liens, acc_now_delinq, chargeoff_within_12_mths, collections_12_mths_ex_med, num_accts_ever_120_pd, num_tl_30dpd, num_tl_90g_dpd_24m, pct_tl_nvr_dlq",0.6915971715175413,0.0011134971991911824,0.702997942605317,0.001540414687244973

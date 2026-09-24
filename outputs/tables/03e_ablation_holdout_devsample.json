@@ -1,6 +1,6 @@
 {
-  "tag": "holdout",
-  "model_tag": "holdout",
+  "tag": "holdout_devsample",
+  "model_tag": "holdout_devsample",
   "model": "discrete_hazard",
   "n_test_rows": 50000,
   "sampled": true,
@@ -741,5 +741,6 @@
         "scipy": "1.16.2"
       }
     }
-  }
+  },
+  "note": "Superseded. Computed against 02_models_holdout_devsample.pkl, a 200k dev-sample model with monthly bins that had been written under the reserved holdout tag. See FINDINGS 7d."
 }

@@ -1,0 +1,365 @@
+{
+  "source": "outputs\\data\\accepted_labeled.parquet",
+  "tag": "holdout",
+  "n_rows": 2257790,
+  "split_scheme": "out_of_time",
+  "oot_cutoff": 2016,
+  "train_years": [
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015
+  ],
+  "test_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "ipcw_fitted_on": "test",
+  "early_stopping": {
+    "validation": "random 10% of training loans",
+    "n_fit": 796198,
+    "n_val": 88466,
+    "trees": 491,
+    "best_iteration": 491
+  },
+  "data_source": "outputs/data/accepted_labeled.parquet",
+  "results_by_vintage": {
+    "cox": {
+      "2016": {
+        "model": "cox",
+        "split": "test_2016",
+        "n": 434407,
+        "event_rate": 0.1571,
+        "concordance": 0.6647,
+        "ibs": 0.1113,
+        "auc_6m": 0.6735,
+        "auc_12m": 0.6762,
+        "auc_18m": 0.6785,
+        "auc_24m": 0.6786,
+        "auc_30m": 0.6761,
+        "auc_36m": 0.6614,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 392363,
+          "12": 336742,
+          "18": 278765,
+          "24": 225345,
+          "30": 125539,
+          "36": 11287
+        }
+      },
+      "2017": {
+        "model": "cox",
+        "split": "test_2017",
+        "n": 443579,
+        "event_rate": 0.0883,
+        "concordance": 0.6451,
+        "ibs": 0.0731,
+        "auc_6m": 0.6472,
+        "auc_12m": 0.6479,
+        "auc_18m": 0.643,
+        "auc_24m": 0.6401,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 397062,
+          "12": 338988,
+          "18": 179210,
+          "24": 29887
+        }
+      },
+      "2018": {
+        "model": "cox",
+        "split": "test_2018",
+        "n": 495140,
+        "event_rate": 0.0179,
+        "concordance": 0.6189,
+        "ibs": 0.0226,
+        "auc_6m": 0.6215,
+        "auc_12m": 0.629,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 296046,
+          "12": 53628
+        }
+      }
+    },
+    "discrete_hazard": {
+      "2016": {
+        "model": "discrete_hazard",
+        "split": "test_2016",
+        "n": 434407,
+        "event_rate": 0.1571,
+        "concordance": 0.6901,
+        "ibs": 0.1096,
+        "auc_6m": 0.7178,
+        "auc_12m": 0.7094,
+        "auc_18m": 0.7058,
+        "auc_24m": 0.7038,
+        "auc_30m": 0.7004,
+        "auc_36m": 0.6562,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [
+          36
+        ],
+        "n_controls_by_horizon": {
+          "6": 392363,
+          "12": 336742,
+          "18": 278765,
+          "24": 225345,
+          "30": 125539,
+          "36": 11287
+        }
+      },
+      "2017": {
+        "model": "discrete_hazard",
+        "split": "test_2017",
+        "n": 443579,
+        "event_rate": 0.0883,
+        "concordance": 0.6879,
+        "ibs": 0.0711,
+        "auc_6m": 0.7051,
+        "auc_12m": 0.6988,
+        "auc_18m": 0.6977,
+        "auc_24m": 0.6994,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 397062,
+          "12": 338988,
+          "18": 179210,
+          "24": 29887
+        }
+      },
+      "2018": {
+        "model": "discrete_hazard",
+        "split": "test_2018",
+        "n": 495140,
+        "event_rate": 0.0179,
+        "concordance": 0.7015,
+        "ibs": 0.0223,
+        "auc_6m": 0.7055,
+        "auc_12m": 0.7036,
+        "unreliable_horizons": [],
+        "high_variance_horizons": [],
+        "n_controls_by_horizon": {
+          "6": 296046,
+          "12": 53628
+        }
+      }
+    }
+  },
+  "time_bin_months": 3,
+  "negative_subsample": 0.4,
+  "with_lc_grade": false,
+  "with_derived": false,
+  "dropped_by_request": [],
+  "n_train": 884664,
+  "n_test": 1373126,
+  "eval_horizons": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "features": {
+    "numeric": [
+      "loan_amnt",
+      "installment",
+      "annual_inc",
+      "dti",
+      "open_acc",
+      "total_acc",
+      "revol_bal",
+      "revol_util",
+      "mort_acc",
+      "delinq_2yrs",
+      "inq_last_6mths",
+      "pub_rec",
+      "pub_rec_bankruptcies",
+      "tax_liens",
+      "acc_now_delinq",
+      "delinq_amnt",
+      "chargeoff_within_12_mths",
+      "collections_12_mths_ex_med",
+      "mths_since_last_delinq",
+      "mths_since_last_record",
+      "mths_since_last_major_derog",
+      "tot_coll_amt",
+      "tot_cur_bal",
+      "total_rev_hi_lim",
+      "acc_open_past_24mths",
+      "avg_cur_bal",
+      "bc_open_to_buy",
+      "bc_util",
+      "mo_sin_old_il_acct",
+      "mo_sin_old_rev_tl_op",
+      "mo_sin_rcnt_rev_tl_op",
+      "mo_sin_rcnt_tl",
+      "mths_since_recent_bc",
+      "mths_since_recent_bc_dlq",
+      "mths_since_recent_inq",
+      "mths_since_recent_revol_delinq",
+      "num_accts_ever_120_pd",
+      "num_actv_bc_tl",
+      "num_actv_rev_tl",
+      "num_bc_sats",
+      "num_bc_tl",
+      "num_il_tl",
+      "num_op_rev_tl",
+      "num_rev_accts",
+      "num_rev_tl_bal_gt_0",
+      "num_sats",
+      "num_tl_30dpd",
+      "num_tl_90g_dpd_24m",
+      "num_tl_op_past_12m",
+      "pct_tl_nvr_dlq",
+      "percent_bc_gt_75",
+      "tot_hi_cred_lim",
+      "total_bal_ex_mort",
+      "total_bc_limit",
+      "total_il_high_credit_limit"
+    ],
+    "categorical": [
+      "purpose",
+      "home_ownership",
+      "verification_status",
+      "addr_state",
+      "application_type",
+      "initial_list_status"
+    ]
+  },
+  "results": [
+    {
+      "model": "cox",
+      "split": "test",
+      "n": 1373126,
+      "event_rate": 0.0847,
+      "concordance": 0.6602,
+      "ibs": 0.101,
+      "auc_6m": 0.6525,
+      "auc_12m": 0.6555,
+      "auc_18m": 0.6525,
+      "auc_24m": 0.6477,
+      "auc_30m": 0.6464,
+      "auc_36m": 0.6343,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 1085471,
+        "12": 729358,
+        "18": 457975,
+        "24": 255232,
+        "30": 125539,
+        "36": 11287
+      }
+    },
+    {
+      "model": "discrete_hazard",
+      "split": "test",
+      "n": 1373126,
+      "event_rate": 0.0847,
+      "concordance": 0.6936,
+      "ibs": 0.0992,
+      "auc_6m": 0.71,
+      "auc_12m": 0.7025,
+      "auc_18m": 0.6975,
+      "auc_24m": 0.6906,
+      "auc_30m": 0.6854,
+      "auc_36m": 0.6417,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 1085471,
+        "12": 729358,
+        "18": 457975,
+        "24": 255232,
+        "30": 125539,
+        "36": 11287
+      }
+    }
+  ],
+  "provenance": {
+    "stage": "02_train_models",
+    "created_at": "2026-09-23T17:37:59+00:00",
+    "code": {
+      "commit": "e9456001be4b7f7e9e2b1de071a70ff7eb9286d9",
+      "code_dirty": true,
+      "dirty_files": [
+        "cripts/02_train_models.py",
+        "scripts/02r_recompute_metrics.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4177,
+      "mtime": "2026-09-23T16:00:24+00:00",
+      "sha256": "7e2fa1c0bdfc695555f3d47d77a430fdb8e7a4a18172364d18027645d1d29bff"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "full": true,
+      "with_derived": false,
+      "drop_features": null,
+      "with_lc_grade": false,
+      "split": "out_of_time",
+      "oot_cutoff": 2016,
+      "val_frac": 0.1,
+      "time_bin": 3,
+      "negative_subsample": 0.4,
+      "cox_max_rows": 300000,
+      "skip_cox": false,
+      "skip_gbm": false,
+      "tag": "holdout",
+      "overwrite": false
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      }
+    },
+    "outputs": {
+      "model": {
+        "path": "outputs/models/02_models_holdout.pkl",
+        "exists": true,
+        "bytes": 43928829,
+        "mtime": "2026-09-23T17:37:59+00:00",
+        "sha256": "075625bc4762082987c135feeeff36d34f4f26b3f43bf3cde5725427cce9ef73"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

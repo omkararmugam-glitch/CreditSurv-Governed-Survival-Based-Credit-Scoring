@@ -45,6 +45,9 @@ from creditsurv.reporting.tables import to_markdown, write_json, write_table  # 
 # absence is the case worth measuring. A file either has the bureau's recency
 # block or it does not.
 GROUPS: dict[str, tuple[str, ...]] = {
+    # Reported separately because three of its four members are excluded from the
+    # model by the section 0 decision, so the group reduces to installment.
+    "lender_pricing": ("grade", "sub_grade", "int_rate", "installment"),
     "loan_structure": ("loan_amnt", "installment"),
     "income_and_burden": ("annual_inc", "dti"),
     "recency_months": ("mths_since_last_delinq", "mths_since_last_record",
@@ -181,9 +184,11 @@ def main(argv: list[str] | None = None) -> int:
         if not present:
             continue
         c, auc12 = score(_ablate(dm.X, present))
+        absent = [m for m in members if m not in present]
         group_rows.append({"scope": "group", "name": name,
                           "n_features": len(present),
                           "features": ", ".join(present),
+                          "not_model_features": ", ".join(absent),
                           "concordance": c, "concordance_drop": base_c - c,
                           "auc_12m": auc12, "auc_12m_drop": base_auc12 - auc12})
         print(f"  group {name}: C {c:.4f} (-{base_c - c:.4f}), "

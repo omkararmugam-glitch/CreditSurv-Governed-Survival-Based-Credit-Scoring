@@ -1,0 +1,235 @@
+{
+  "recomputed": true,
+  "recomputed_at": "2026-09-23T17:30:06+00:00",
+  "why": "the original 02_metrics_holdout_devsample.json was lost before it was committed; these numbers come from evaluating the saved model, not from a training run",
+  "unrecoverable_fields": [
+    "provenance stamp of the original training run (git commit, input file SHA-256 hashes, library versions at train time)",
+    "early-stopping history and the best iteration chosen during training",
+    "wall-clock timings of the original run",
+    "the validation split used for early stopping"
+  ],
+  "tag": "holdout_devsample",
+  "source": "C:\\Users\\Omkar\\OneDrive\\Documents\\data science 2\\outputs\\data\\dev_sample.parquet",
+  "data_source": "C:\\Users\\Omkar\\OneDrive\\Documents\\data science 2\\outputs\\data\\dev_sample.parquet",
+  "n_rows": 200000,
+  "n_train": 78363,
+  "n_test": 121637,
+  "n_test_recorded": 121637,
+  "evaluated_on_sample": false,
+  "split_scheme": "out_of_time",
+  "oot_cutoff": 2016,
+  "train_years": [
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015
+  ],
+  "test_years": [
+    2016,
+    2017,
+    2018
+  ],
+  "time_bin_months": 1,
+  "negative_subsample": 1.0,
+  "num_boost_round": 600,
+  "trees_kept": 131,
+  "features": {
+    "numeric": [
+      "loan_amnt",
+      "installment",
+      "annual_inc",
+      "dti",
+      "open_acc",
+      "total_acc",
+      "revol_bal",
+      "revol_util",
+      "mort_acc",
+      "delinq_2yrs",
+      "inq_last_6mths",
+      "pub_rec",
+      "pub_rec_bankruptcies",
+      "tax_liens",
+      "acc_now_delinq",
+      "delinq_amnt",
+      "chargeoff_within_12_mths",
+      "collections_12_mths_ex_med",
+      "mths_since_last_delinq",
+      "mths_since_last_record",
+      "mths_since_last_major_derog",
+      "tot_coll_amt",
+      "tot_cur_bal",
+      "total_rev_hi_lim",
+      "acc_open_past_24mths",
+      "avg_cur_bal",
+      "bc_open_to_buy",
+      "bc_util",
+      "mo_sin_old_il_acct",
+      "mo_sin_old_rev_tl_op",
+      "mo_sin_rcnt_rev_tl_op",
+      "mo_sin_rcnt_tl",
+      "mths_since_recent_bc",
+      "mths_since_recent_bc_dlq",
+      "mths_since_recent_inq",
+      "mths_since_recent_revol_delinq",
+      "num_accts_ever_120_pd",
+      "num_actv_bc_tl",
+      "num_actv_rev_tl",
+      "num_bc_sats",
+      "num_bc_tl",
+      "num_il_tl",
+      "num_op_rev_tl",
+      "num_rev_accts",
+      "num_rev_tl_bal_gt_0",
+      "num_sats",
+      "num_tl_30dpd",
+      "num_tl_90g_dpd_24m",
+      "num_tl_op_past_12m",
+      "pct_tl_nvr_dlq",
+      "percent_bc_gt_75",
+      "tot_hi_cred_lim",
+      "total_bal_ex_mort",
+      "total_bc_limit",
+      "total_il_high_credit_limit"
+    ],
+    "categorical": [
+      "purpose",
+      "home_ownership",
+      "verification_status",
+      "addr_state",
+      "application_type",
+      "initial_list_status"
+    ]
+  },
+  "eval_horizons": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "results": [
+    {
+      "model": "cox",
+      "split": "test",
+      "n": 121637,
+      "event_rate": 0.0849,
+      "concordance": 0.6734,
+      "ibs": 0.1007,
+      "auc_6m": 0.6695,
+      "auc_12m": 0.6741,
+      "auc_18m": 0.6722,
+      "auc_24m": 0.6654,
+      "auc_30m": 0.6615,
+      "auc_36m": 0.6329,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 96237,
+        "12": 64391,
+        "18": 40396,
+        "24": 22496,
+        "30": 11093,
+        "36": 938
+      }
+    },
+    {
+      "model": "discrete_hazard",
+      "split": "test",
+      "n": 121637,
+      "event_rate": 0.0849,
+      "concordance": 0.6725,
+      "ibs": 0.1012,
+      "auc_6m": 0.6769,
+      "auc_12m": 0.6775,
+      "auc_18m": 0.6761,
+      "auc_24m": 0.666,
+      "auc_30m": 0.6597,
+      "auc_36m": 0.64,
+      "unreliable_horizons": [],
+      "high_variance_horizons": [
+        36
+      ],
+      "n_controls_by_horizon": {
+        "6": 96237,
+        "12": 64391,
+        "18": 40396,
+        "24": 22496,
+        "30": 11093,
+        "36": 938
+      }
+    }
+  ],
+  "seconds_to_recompute": 8.2,
+  "provenance": {
+    "stage": "02_metrics_recomputed",
+    "created_at": "2026-09-23T17:30:06+00:00",
+    "code": {
+      "commit": "e9456001be4b7f7e9e2b1de071a70ff7eb9286d9",
+      "code_dirty": true,
+      "dirty_files": [
+        "scripts/02r_recompute_metrics.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4177,
+      "mtime": "2026-09-23T16:00:24+00:00",
+      "sha256": "7e2fa1c0bdfc695555f3d47d77a430fdb8e7a4a18172364d18027645d1d29bff"
+    },
+    "args": {
+      "model_tag": "holdout_devsample",
+      "sample": 0
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/dev_sample.parquet",
+        "exists": true,
+        "bytes": 18169223,
+        "mtime": "2026-09-21T12:48:31+00:00",
+        "sha256": "a19de31b3c0452a456bffb46d76b1ae243a7cecdd24f9e29d58cf1cd38b3285a"
+      },
+      "model": {
+        "path": "outputs/models/02_models_holdout_devsample.pkl",
+        "exists": true,
+        "bytes": 8506921,
+        "mtime": "2026-09-22T14:03:10+00:00",
+        "sha256": "76019bba221937eebefc51e2ffe75d886159ff20a1960506cf65ed23057ebb87"
+      }
+    },
+    "outputs": {
+      "metrics": {
+        "path": "outputs/tables/02_metrics_holdout_devsample_recomputed.json",
+        "exists": false
+      },
+      "comparison": {
+        "path": "outputs/tables/02_model_comparison_holdout_devsample_recomputed.csv",
+        "exists": true,
+        "bytes": 471,
+        "mtime": "2026-09-23T17:30:06+00:00",
+        "sha256": "5d099d0527e5da730251e941660f2db9578420b98d7b12bb23ba62a4f10540dc"
+      }
+    },
+    "environment": {
+      "python": "3.14.6",
+      "packages": {
+        "numpy": "2.5.2",
+        "pandas": "2.3.3",
+        "pyarrow": "22.0.0",
+        "scikit-learn": "1.9.0",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.16.2"
+      }
+    }
+  }
+}

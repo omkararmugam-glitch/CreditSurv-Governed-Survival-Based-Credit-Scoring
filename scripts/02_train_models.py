@@ -61,6 +61,54 @@ from creditsurv.reporting.tables import (  # noqa: E402
 )
 
 
+RESERVED_TAGS: dict[str, dict] = {
+    # A tag whose results other sections cite by name. Writing something else under
+    # one is how outputs/models/02_models_holdout.pkl came to hold a 200k dev-sample
+    # monthly-bin model for a day, with FINDINGS section 6 reserved for the
+    # pre-registered full-data run (see FINDINGS 7d).
+    "holdout": {
+        "full": (True, "the pre-registered holdout is trained on the full dataset "
+                       "(--full)"),
+        "time_bin": (3, "the pre-registered holdout uses quarterly bins "
+                        "(--time-bin 3)"),
+        "negative_subsample": (0.4, "the pre-registered holdout subsamples negatives "
+                                    "at 0.4 (--negative-subsample 0.4)"),
+        "split": ("out_of_time", "the holdout is an out-of-time split "
+                                 "(--split out_of_time)"),
+        "oot_cutoff": (2016, "the pre-registered cutoff is 2016 (--oot-cutoff 2016)"),
+    },
+    "full": {
+        "full": (True, "the 'full' tag is the full-dataset primary model (--full)"),
+        "time_bin": (3, "the primary full run uses quarterly bins (--time-bin 3)"),
+        "negative_subsample": (0.4, "the primary full run subsamples negatives at 0.4 "
+                                    "(--negative-subsample 0.4)"),
+    },
+}
+"""Tags that may only be written by the run they were registered for, with the
+setting each one requires and the sentence to print when it does not match."""
+
+
+def check_reserved_tag(tag: str, args) -> list[str]:
+    """Settings that disagree with a reserved tag's registered design.
+
+    Returns one message per mismatch, empty when the tag is free or the run matches.
+    A derived tag such as ``holdout_lcgrade`` is not reserved: only the exact name
+    is, because that is the name other sections cite.
+    """
+    required = RESERVED_TAGS.get(tag)
+    if not required:
+        return []
+    problems = []
+    for name, (expected, why) in required.items():
+        actual = getattr(args, name, None)
+        if name == "full":
+            actual = bool(actual)
+        if actual != expected:
+            problems.append(f"--{name.replace('_', '-')} is {actual!r}, expected "
+                            f"{expected!r}: {why}")
+    return problems
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default="config/config.yaml")
@@ -121,6 +169,18 @@ def main() -> int:
     tag = args.tag or ("full" if args.full else "dev")
     if args.with_lc_grade:
         tag += "_lcgrade"
+
+    # Checked before anything is read or written: a reserved tag is a name other
+    # sections cite, so it may only be written by the run it was registered for.
+    mismatches = check_reserved_tag(tag, args)
+    if mismatches:
+        print(f"ERROR: {tag!r} is a reserved tag and this run does not match its "
+              f"registered settings:", file=sys.stderr)
+        for problem in mismatches:
+            print(f"  {problem}", file=sys.stderr)
+        print("Nothing has been run. Use a different --tag, or run the registered "
+              "settings.", file=sys.stderr)
+        return 2
 
     # Checked before any data is loaded, so a refused run costs nothing. Replacing
     # 02_models_<tag>.pkl silently would leave every Stage 3/4 result describing a

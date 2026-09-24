@@ -898,6 +898,119 @@ exist. It is **off by default**: turning it on changes the model's inputs, so it
 belongs to a new tag and a retrain, not to a silent correction of existing results.
 `--drop-features` was added alongside it for the unpriced variants in 7e.
 
+## 7d. What an absent column actually costs
+
+Measured by scoring the holdout with one feature, or one group of features, set to
+**missing** -- which is exactly what a scoring run does when a column is absent from
+an uploaded file. Not an importance measure: a feature can matter and still cost
+little when absent, because the trees route around it through correlated columns.
+
+**An earlier version of this table is superseded.** The first ablation was run
+against `02_models_holdout.pkl`, which turned out to hold a 200k dev-sample model
+with monthly bins rather than the pre-registered full-data holdout (see the tag
+incident below). Those files are kept, renamed to `..._holdout_devsample`, and their
+JSON carries a `note` saying they are superseded. The numbers below replace them and
+come from **`--model-tag full`**, the model the dashboard actually scores with:
+50,000 test rows, baseline concordance **0.6927**, 12-month AUC **0.7045**.
+
+### Groups, worst first
+
+| group | features | concordance drop | 12m AUC drop |
+|---|---|---|---|
+| loan_structure | 2 | 0.0282 | 0.0324 |
+| income_and_burden | 2 | 0.0232 | 0.0253 |
+| account_counts | 14 | 0.0231 | 0.0229 |
+| application_descriptors | 5 | 0.0172 | 0.0187 |
+| utilisation | 7 | 0.0168 | 0.0136 |
+| recency_months | 11 | 0.0156 | 0.0205 |
+| inquiries | 2 | 0.0057 | 0.0087 |
+| geography | 1 | 0.0039 | 0.0050 |
+| balances_and_limits | 6 | 0.0025 | 0.0025 |
+| delinquency_and_public_record | 12 | 0.0011 | 0.0015 |
+
+### The fifteen most expensive single features
+
+| feature | concordance drop | 12m AUC drop |
+|---|---|---|
+| installment | 0.0187 | 0.0229 |
+| loan_amnt | 0.0169 | 0.0178 |
+| annual_inc | 0.0167 | 0.0164 |
+| application_type | 0.0094 | 0.0110 |
+| acc_open_past_24mths | 0.0072 | 0.0095 |
+| purpose | 0.0063 | 0.0095 |
+| mo_sin_old_rev_tl_op | 0.0054 | 0.0060 |
+| dti | 0.0047 | 0.0056 |
+| bc_util | 0.0044 | 0.0050 |
+| addr_state | 0.0039 | 0.0050 |
+| tot_hi_cred_lim | 0.0035 | 0.0038 |
+| revol_bal | 0.0033 | 0.0036 |
+| mths_since_recent_inq | 0.0030 | 0.0053 |
+| total_bc_limit | 0.0023 | 0.0002 |
+| revol_util | 0.0023 | 0.0026 |
+
+**Lender pricing, reported separately as asked.** The pricing group is
+`grade`, `sub_grade`, `int_rate`, `installment`, and **three of those four are not
+model features at all** -- excluded by the section 0 decision -- so the group reduces
+to `installment` alone, at **0.0187**
+concordance. On the full model that makes it the single most expensive column to
+lose, ahead of `loan_amnt` and `annual_inc`. `installment` is computed by the lender
+from the rate it assigned, so the model's most valuable input is partly a record of
+Lending Club's own pricing decision. For a genuinely unpriced applicant it can be
+derived from `loan_amnt`, `int_rate` and `term` by the standard amortisation formula
+-- but only once a rate exists, which is the circularity section 7b describes.
+
+**Geography.** `addr_state` costs
+0.0039 concordance and
+0.0050 AUC. It is the one feature
+that may never be disclosed as a reason (section 3(b)), so a variant without it is
+cheap to run and is being measured separately.
+
+### Required and optional, with the thresholds fixed here
+
+The thresholds are stated before use, and they are deliberately not "large drop =
+required", because measurement does not support that framing: no single feature's
+absence takes the model below usable. The worst case above leaves concordance at
+0.6740.
+
+| tier | rule | features | what a run does |
+|---|---|---|---|
+| **Required** | concordance drop >= 0.010, **or** structurally necessary | installment, loan_amnt, annual_inc | refuse the file, unless the column can be derived exactly (7e) |
+| **Optional, costed** | drop 0.002 to 0.010 | 12 features | score, and report the measured cost per missing feature |
+| **Optional, free** | drop < 0.002 | 46 features | score, and note the absence without a cost claim |
+
+`installment` sits in the required tier but is **required-or-derivable**: a file with
+`loan_amnt`, `int_rate` and `term` satisfies it by derivation, which is what lets a
+raw-applicant file through.
+
+**Cumulative budget.** Drops are not additive, so a file missing several optional
+columns is reported with the sum of their individual drops as a **conservative upper
+bound**, labelled as such: amber above 0.010 concordance, red above 0.030 (4.3% of
+baseline). Where a whole group is absent, the group figure is used instead, because
+that was measured jointly.
+
+## 7e. The 2016 loan-amount change is real drift, not a data error
+
+The drift check flags `loan_amnt` on out-of-time data. It is right to.
+
+| period | loans | max | 99.9th percentile | mean | share above 35,000 |
+|---|---|---|---|---|---|
+| 2007-2015 | 884,664 | 35,000 | 35,000 | 14,773 | 0.000% |
+| 2016-2018 | 1,373,126 | 40,000 | 40,000 | 15,236 | 3.260% |
+
+Pre-2016 the maximum is **exactly** 35,000 with not one loan above it; from 2016 the
+maximum is **exactly** 40,000 and 3.26% of loans exceed the old cap. That is a
+product change -- Lending Club raised its maximum personal-loan size -- not a parsing
+fault, a unit change or a corrupted column. Two consequences:
+
+* A drift alert on `loan_amnt` for a 2016+ file is **correct and expected**, and the
+  dashboard should not be read as reporting a data problem. Scoring 2016+ loans with
+  a model trained to 2015 means extrapolating above the largest loan the model ever
+  saw, for about one applicant in thirty.
+* Any range check learned from training data will flag those loans as out of range.
+  That is also correct: they are outside the training range. The run scores them and
+  flags them, and does not clip them, which is the behaviour cleaning already has
+  (`clip_numeric` off).
+
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
 <!-- keep:preregistration-settings -->
