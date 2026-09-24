@@ -33,10 +33,10 @@ columns is scored with those features left missing, and the coverage is reported
 on screen and in every output file. Missing one of :data:`CORE_REQUIRED` stops
 the run instead.
 
-**Explanations are capped.** SurvSHAP(t) costs about 2.7 seconds per applicant
-(measured on the full model), so only *rejected* applicants -- the ones that need
-Regulation B reasons -- are explained, up to ``max_explained``. Rows past the cap
-say so in their own column rather than being left blank.
+**Cleaning values belong to the model.** They are fitted once on its whole training
+split and saved with it; scoring reads them and never fits. A model without them
+refuses to score and says which command adds them, rather than quietly learning
+bounds from a sample or from the file being scored.
 """
 
 from __future__ import annotations
@@ -56,7 +56,9 @@ import pandas as pd
 from . import drift as drift_mod
 from . import eda
 from .cleaning import (CleaningPolicy, CleaningReport, CleaningValues, clean,
-                       fit_values, policy_from_config)
+                       fit_values, policy_from_config)   # fit_values: never called
+# here -- imported so tests/test_cleaning_values_source.py can assert that scoring
+# does not fit cleaning values.
 from .config import Config
 from .explain.adverse_action import MAX_PRINCIPAL_REASONS, build_adverse_action_notice
 from .explain.survshap import explain_survshap
@@ -441,15 +443,34 @@ def load_context(cfg: Config, model_tag: str | None = None,
     else:
         dm = build_design_matrix(train, spec, flavour="gbm")
 
-    # Cleaning values come from the bundle, where Stage 2 saved what it fitted on
-    # its training split. A bundle written before cleaning.py existed has none, so
-    # they are fitted here from that same training split -- still training data,
-    # never the upload -- and the run says so.
+    # Cleaning values are the model's, fitted once on its whole training split and
+    # only ever read here. Scoring never fits them: a value learned from the file
+    # being scored would make each upload its own yardstick, and a value learned
+    # from a 20,000-row sample is not the one the model was trained against.
     policy = policy_from_config(cfg)
     saved = bundle.get("cleaning_values")
     from_bundle = bool(saved)
-    values = (CleaningValues.from_dict(saved) if saved
-              else fit_values(train, spec, policy=policy, source=src))
+    if not saved:
+        sidecar = cfg.paths.models_dir / f"02_cleaning_values_{model_tag}.json"
+        if sidecar.exists():
+            try:
+                payload = json.loads(sidecar.read_text(encoding="utf-8"))
+                saved = payload.get("values") or payload
+            except (OSError, ValueError) as exc:
+                raise BatchError(
+                    f"The cleaning values for '{model_tag}' could not be read.",
+                    f"{sidecar}: {exc}",
+                    f"Rebuild them: python scripts/02s_save_cleaning_values.py "
+                    f"--model-tag {model_tag} --overwrite") from exc
+    if not saved:
+        raise BatchError(
+            f"The '{model_tag}' model has no saved cleaning values, so it cannot "
+            f"score a file.",
+            f"neither the bundle nor {cfg.paths.models_dir.as_posix()}/"
+            f"02_cleaning_values_{model_tag}.json holds them",
+            f"Add them once, without retraining: python "
+            f"scripts/02s_save_cleaning_values.py --model-tag {model_tag}")
+    values = CleaningValues.from_dict(saved)
 
     return ScoringContext(
         cfg=cfg, model_tag=model_tag, model_name=key, model=art[key], spec=spec,
