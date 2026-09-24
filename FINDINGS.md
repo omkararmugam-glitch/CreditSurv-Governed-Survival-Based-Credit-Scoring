@@ -659,7 +659,45 @@ The section 3 finding counts as replicated only if both hold.
 on 2016-2018 rejected applicants (item 5) are descriptive and have no pass/fail rule.
 <!-- /keep:preregistration-holdout -->
 
-*Not run yet.* The pre-registered decision rules above were fixed before any holdout result existed.
+### 6.1 The artefact at the `holdout` tag matches the registered design
+
+`outputs/models/02_models_holdout.pkl` was written on 2026-09-23 by a command run
+while testing that the new reserved-tag guard *accepts* a correct run; it completed
+rather than being interrupted. Because the `holdout` tag is the one section 6 cites,
+the artefact was checked against the design fixed above before being kept, and all
+five registered settings match:
+
+| registered | recorded in the artefact's provenance |
+|---|---|
+| `--full` | `full: true` |
+| `--split out_of_time` | `split: "out_of_time"` |
+| `--oot-cutoff 2016` | `oot_cutoff: 2016` |
+| `--time-bin 3` | `time_bin: 3` |
+| `--negative-subsample 0.4` | `negative_subsample: 0.4` |
+
+It trained on 884,664 person-period rows from the 2007-2015 vintages and evaluated on
+1,373,126 loans from 2016-2018, stopping at 491 trees: **GBM concordance 0.6936, Cox
+0.6602**, with per-vintage results for 2016, 2017 and 2018 in its metrics file
+(GBM concordance 0.6901, 0.6879 and 0.7015 respectively).
+
+It is therefore the Stage 2 part of the pre-registered Full holdout, and it is kept
+under that tag rather than renamed. It is also a replication of `holdout_nograde`,
+which is the same design run 19 minutes earlier: the two metrics files agree on every
+figure -- both concordances, all six AUCs, IBS, event rate, train and test counts, tree
+count and the full 61-feature list -- and the two 43,928,829-byte model files differ in
+exactly **4 bytes**, which hold lifelines' `_time_fit_was_called` timestamp. The models
+are otherwise bit-identical, so this run is a reproducibility check that passed.
+
+Two things it is **not**. It is not evidence that unregistered runs are harmless: it
+landed on the reserved tag by accident, which is the failure the guard now prevents
+(7d), and it happened to match only because the command being tested was the correct
+one. And it is not the pre-registered *holdout study*: H1, H2 and H3 below are
+explanation tests that Stage 2 does not touch.
+
+*H1-H3 not run yet.* The pre-registered decision rules above were fixed before any
+holdout result existed, and no explanation test in this section has been run. Stage 2's
+metrics (an item the pre-registration explicitly lists as descriptive, with no
+pass/fail rule) are the only part that now exists.
 
 ## 7. Bulk explanation: can TreeSHAP stand in for SurvSHAP(t)?
 
@@ -884,6 +922,35 @@ So five features -- including the single most standard credit-risk variable ther
 is -- were dropped by an ordering mistake, and the results in sections 2, 3, 6 and
 7b were all produced without them.
 
+### Which models this affects: all of them
+
+Checked, not assumed: the feature list recorded in every one of the eight
+`02_metrics_*.json` files on disk was read back, and **none** contains
+`fico_midpoint`, `fico_range_low`, `emp_length_years` or `term_months`. That is every
+model this project has ever trained -- `dev`, `full`, `holdout`, `holdout_devsample`,
+`holdout_lcgrade`, `holdout_nograde`, `holdout_small`, `holdout_medium`.
+
+So, plainly: **every model trained before this fix was trained without a credit score
+and without employment length, because of the ordering defect described above, not
+because anyone decided to leave them out.** No section of this document records a
+decision to exclude them; there was none to record. The two features were listed in
+the schema, dropped by `default_spec` as superseded, and then never restored by the
+derivation step that was supposed to supersede them. `term_months` is a separate
+omission of the same kind, by plain oversight rather than by ordering (7f).
+
+**Every earlier result in this document therefore describes a model with no credit
+score and no employment length.** That includes: the Stage 2 metrics in section 2, all
+of the explainability work in section 3, the reject inference in section 4, the summary
+in section 5, the out-of-time holdout in section 6, the TreeSHAP comparison in section
+7, the grade benchmark in 7b, the ablation and the required/optional split in 7d, and
+the cheaper-settings comparison in 7a. It also includes the model the application
+scores uploads with today (`decision.model_tag: full`). None of those results is
+withdrawn -- each is a correct measurement of the model it was computed on -- but none
+of them is a statement about what this data can support, only about what these models
+did with part of it. The `holdout_applicant` and `holdout_derived` variants registered
+in 7f are the first models that will have the score, and until they are trained the gap
+is unquantified.
+
 Consequences worth stating plainly:
 
 * Section 7b's measured cost of excluding `grade` is an **upper bound on what the
@@ -981,6 +1048,19 @@ absence takes the model below usable. The worst case above leaves concordance at
 `installment` sits in the required tier but is **required-or-derivable**: a file with
 `loan_amnt`, `int_rate` and `term` satisfies it by derivation, which is what lets a
 raw-applicant file through.
+
+**This table is now the only rule, wherever it exists.** Before this, ten columns were
+required by a hand-picked list (`PROVISIONAL_REQUIRED`), and measurement disagrees with
+seven of them: `purpose` costs 0.0063, `dti` 0.0047, `revol_bal` 0.0033,
+`inq_last_6mths` 0.0016, `home_ownership` 0.0014, `open_acc` 0.0012 and `delinq_2yrs`
+0.0002 -- every one of them optional under the thresholds above, and none of them worth
+refusing a file over. A file missing any of those is now scored, with the cost
+reported. The two rules are never combined, because their union would be stricter than
+either: a model with an ablation table uses the table alone, and the hand-picked list
+plays no part. A model **without** a table falls back to the list, says on screen and in
+`run_summary.csv` that it did (`required_rule: provisional`), and names the command that
+replaces it with measurement. Which rule judged a file is recorded in
+`validation_report.json` and `run_summary.csv` for every run.
 
 **Cumulative budget.** Drops are not additive, so a file missing several optional
 columns is reported with the sum of their individual drops as a **conservative upper
