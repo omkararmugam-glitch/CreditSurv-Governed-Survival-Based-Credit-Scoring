@@ -71,7 +71,7 @@ from .features.build import build_design_matrix
 from .pipeline import load_model_bundle, resolve_data_source
 from .provenance import PROJECT_ROOT, build_stamp, file_fingerprint
 
-__all__ = ["CORE_REQUIRED", "ALIASES", "OUTPUT_NAMES", "BatchError",
+__all__ = ["CORE_REQUIRED", "PROVISIONAL_REQUIRED", "ALIASES", "OUTPUT_NAMES", "BatchError",
            "ValidationReport", "ScoringContext", "BatchResult", "read_upload",
            "validate", "load_context", "prepare", "profile", "run_batch",
            "load_result", "bundle_zip", "iter_chunks", "Aggregates", "CAP_NOTE",
@@ -153,12 +153,21 @@ OUTPUT_NAMES: tuple[str, ...] = (
 """Every file a finished run writes. Used to recognise a completed run directory
 and to refuse writing a second run into one."""
 
-CORE_REQUIRED: tuple[str, ...] = (
+PROVISIONAL_REQUIRED: tuple[str, ...] = (
     "loan_amnt", "installment", "annual_inc", "dti", "open_acc", "revol_bal",
     "delinq_2yrs", "inq_last_6mths", "purpose", "home_ownership",
 )
-"""Without these the file is not an applicant file in any useful sense, so a
-missing one stops the run rather than being imputed."""
+"""A stand-in, used **only** for a model with no ablation table.
+
+These ten were picked by hand, on the reasonable-sounding but unmeasured view that
+a file without them is not an applicant file. Measurement disagrees: on the full
+model seven of them cost under 0.007 concordance to lose, and only three reach the
+0.010 bar (FINDINGS 7d). So wherever a model has a table the measured split is the
+only rule and this list plays no part; a model without one is scored under this
+list and told so, with the command that replaces it."""
+
+CORE_REQUIRED = PROVISIONAL_REQUIRED
+"""Kept as the former name of :data:`PROVISIONAL_REQUIRED`."""
 
 ALIASES: dict[str, str] = {
     # Fixed, reviewable renames -- never inferred per file. Anything not listed
@@ -228,6 +237,10 @@ class ValidationReport:
     """Feature -> the inputs a derivation would have needed."""
     required_missing: list[str] = field(default_factory=list)
     optional_missing: list[str] = field(default_factory=list)
+    required_rule: str = "provisional"
+    """"measured" when the model's ablation table decided which features are
+    required, "provisional" when the hand-picked list stood in for it."""
+    required_rule_note: str = ""
     unused: dict[str, str] = field(default_factory=dict)
     costs: object = None
 
@@ -270,6 +283,8 @@ class ValidationReport:
         if self.unused:
             lines.append("Recognised but unused by this model: " + "; ".join(
                 f"{k} ({v})" for k, v in self.unused.items()))
+        if self.required_rule == "provisional" and self.required_rule_note:
+            lines.append(self.required_rule_note)
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
@@ -279,6 +294,8 @@ class ValidationReport:
                 "blocked": {k: list(v) for k, v in self.blocked.items()},
                 "required_missing": self.required_missing,
                 "optional_missing": self.optional_missing,
+                "required_rule": self.required_rule,
+                "required_rule_note": self.required_rule_note,
                 "recognised_but_unused": self.unused,
                 "coverage": round(self.coverage, 4), "id_column": self.id_column,
                 "mapped": self.mapped, "ignored": self.ignored,
@@ -418,8 +435,13 @@ def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
     missing = [c for c in spec.all_columns if c not in work.columns]
     costs = costs if costs is not None else FeatureCosts()
     rep.costs = costs
-    required = set(costs.required()) | set(CORE_REQUIRED if not costs.per_feature
-                                           else ())
+    # One rule or the other, never a mixture: a measured table replaces the
+    # provisional list outright rather than adding to it.
+    if costs.measured:
+        required, rep.required_rule = set(costs.required()), "measured"
+    else:
+        required, rep.required_rule = set(PROVISIONAL_REQUIRED), "provisional"
+    rep.required_rule_note = costs.rule_note()
     rep.required_missing = [c for c in missing if c in required]
     rep.optional_missing = [c for c in missing if c not in required]
     rep.missing_core = list(rep.required_missing)
@@ -901,7 +923,8 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         if report.required_missing:
             raise BatchError(
                 "Your file is missing required column(s): "
-                + ", ".join(report.required_missing) + ".",
+                + ", ".join(report.required_missing) + ". "
+                + report.required_rule_note,
                 report.message(),
                 "Add the column(s), rename an existing one to match, or supply what "
                 "a derivation needs -- the Details list which inputs are missing for "
@@ -1216,6 +1239,10 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "features_missing": len(report.missing_optional),
         "feature_coverage": round(report.coverage, 4),
         "degraded_coverage": bool(report.coverage < d.min_feature_coverage),
+        "required_rule": report.required_rule,
+        "required_features": "; ".join(
+            report.costs.required() if report.costs is not None
+            and report.costs.measured else PROVISIONAL_REQUIRED),
         "mapped_columns": "; ".join(f"{k}->{v}" for k, v in report.mapped.items()),
         "features_derived": "; ".join(f"{k} ({v})" for k, v in report.derived.items()),
         "features_missing_optional": "; ".join(report.optional_missing),

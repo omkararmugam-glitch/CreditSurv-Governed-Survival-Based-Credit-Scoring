@@ -14,8 +14,9 @@ import streamlit as st
 
 from _common import page_header, paths
 from _dashboard import render
-from creditsurv.batch import (RUNS_DIR, BatchError, available_models, load_context,
-                              load_result, read_upload, run_batch)
+from creditsurv.batch import (PROVISIONAL_REQUIRED, RUNS_DIR, BatchError,
+                              available_models, load_context, load_result,
+                              read_upload, run_batch)
 from creditsurv.derive import derive_features, load_costs
 from creditsurv.schema_match import propose_mapping
 from creditsurv.config import load_config
@@ -126,7 +127,9 @@ else:
     wanted = [c for c in ctx_preview.spec.all_columns if c not in after.columns]
     _, derived, blocked = derive_features(after, wanted)
     costs = load_costs(ctx_preview.model_tag, paths().tables_dir)
-    required = set(costs.required())
+    # The same one-rule-or-the-other choice scoring makes, so the page cannot
+    # promise a file will be accepted and then have it refused.
+    required = set(costs.required() if costs.measured else PROVISIONAL_REQUIRED)
     still_missing = [c for c in wanted if c not in derived]
     missing_required = [c for c in still_missing if c in required]
     if derived:
@@ -136,14 +139,14 @@ else:
         st.error("**Required and not in the file:** "
                  + "; ".join(f"{c} (needs {' and '.join(blocked[c])})" if c in blocked
                              else f"{c} (not in file)" for c in missing_required)
-                 + ". Required means the measured cost of its absence is at least "
-                   "0.010 concordance (FINDINGS 7d).")
+                 + ". " + costs.rule_note())
     optional_missing = [c for c in still_missing if c not in required]
     if optional_missing:
         detail = costs.describe(optional_missing)
         st.warning(f"{len(optional_missing)} optional feature(s) missing; the file "
                    f"will be scored without them."
                    + (f" Measured cost: {detail}" if detail else ""))
+    st.caption(costs.rule_note())
     st.session_state["confirmed_mapping"] = renamed
     if not st.checkbox("These columns are read correctly", value=not missing_required,
                        disabled=bool(missing_required)):

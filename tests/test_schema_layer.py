@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from creditsurv.batch import validate
+from creditsurv.batch import PROVISIONAL_REQUIRED, validate
 from creditsurv.cleaning import fit_values
 from creditsurv.derive import (DERIVATIONS, REQUIRED_DROP, FeatureCosts,
                                derive_features, load_costs)
@@ -234,3 +234,60 @@ def test_the_simplified_name_file_is_understood(values):
                     "addr_state"):
         assert feature in cleaned.columns
     assert "Recognised:" in report.message()
+
+# ------------------------------------------- the measured split is the only rule --
+
+def test_a_measured_table_overrides_the_hand_picked_list(values):
+    """delinq_2yrs and purpose are in the hand-picked list, but the full model's
+    ablation puts them at 0.0002 and 0.0063 concordance. With a table on disk the
+    hand-picked list must play no part, so their absence is optional, not fatal."""
+    costs = FeatureCosts(model_tag="full", per_feature={
+        "loan_amnt": 0.0169, "installment": 0.0187, "annual_inc": 0.0167,
+        "purpose": 0.0063, "dti": 0.0047, "revol_bal": 0.0033,
+        "inq_last_6mths": 0.0016, "home_ownership": 0.0014, "open_acc": 0.0012,
+        "delinq_2yrs": 0.0002})
+    df = pd.DataFrame({"loan_amnt": [10000.0], "installment": [320.0],
+                       "annual_inc": [60000.0], "fico_midpoint": [700.0],
+                       "term_months": [36.0], "addr_state": ["CA"]})
+    _, report = validate(df, SPEC, values=values, costs=costs)
+    assert report.required_rule == "measured"
+    assert report.required_missing == []               # nothing measured-required is gone
+    assert report.ok, report.message()
+    for cheap in ("purpose", "dti", "open_acc", "revol_bal", "inq_last_6mths",
+                  "home_ownership"):     # delinq_2yrs is not a feature of this spec
+        assert cheap in report.optional_missing, cheap
+    assert "measured ablation" in report.required_rule_note
+
+
+def test_without_a_table_the_provisional_list_stands_in_and_says_so(values):
+    """A model with no ablation cannot claim a measured rule. It falls back to the
+    hand-picked list and the message names the command that replaces it."""
+    df = pd.DataFrame({"loan_amnt": [10000.0], "annual_inc": [60000.0],
+                       "fico_midpoint": [700.0]})
+    _, report = validate(df, SPEC, values=values,
+                         costs=FeatureCosts(model_tag="brand_new"))
+    assert report.required_rule == "provisional"
+    assert "purpose" in report.required_missing          # by the list, not by measurement
+    assert not report.ok
+    assert "03e_feature_ablation.py --model-tag brand_new" in report.message()
+
+
+def test_the_two_rules_are_never_mixed(values):
+    """The union of both rules would make the system stricter than either. Checked
+    directly: with a table, every required feature comes from the table."""
+    costs = load_costs("full")
+    df = pd.DataFrame({"dti": [12.0]})
+    _, report = validate(df, SPEC, values=values, costs=costs)
+    assert report.required_rule == "measured"
+    assert set(report.required_missing) <= set(costs.required())
+    only_in_list = set(PROVISIONAL_REQUIRED) - set(costs.required())
+    assert only_in_list, "the lists should differ, or this test proves nothing"
+    assert not (only_in_list & set(report.required_missing))
+
+
+def test_the_rule_is_recorded_for_the_reader(values):
+    """Which rule judged a file is part of the run's record, not just its screen."""
+    payload = validate(pd.DataFrame({"loan_amnt": [1.0]}), SPEC, values=values,
+                       costs=load_costs("full"))[1].to_dict()
+    assert payload["required_rule"] == "measured"
+    assert payload["required_rule_note"]

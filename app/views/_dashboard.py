@@ -54,6 +54,10 @@ def render(result, cfg=None) -> None:
 
     for w in result.report.warnings:
         st.warning(w)
+    if s.get("required_rule") == "provisional":
+        st.warning("This model has no ablation table, so the required columns were "
+                   "the provisional hand-picked list rather than measured costs: "
+                   + str(s.get("required_features", "")))
     if s.get("degraded_coverage"):
         st.error(f"**Degraded run:** only {s['features_present']} of "
                  f"{s['features_expected']} model features were in this file "

@@ -27,13 +27,16 @@ import pandas as pd
 from .provenance import PROJECT_ROOT
 
 __all__ = ["DERIVATIONS", "Derivation", "derive_features", "FeatureCosts",
-           "load_costs", "REQUIRED_DROP", "OPTIONAL_DROP"]
+           "load_costs", "REQUIRED_DROP", "OPTIONAL_DROP", "ABLATION_COMMAND"]
 
 # Thresholds recorded in FINDINGS 7d before use.
 REQUIRED_DROP = 0.010
 """Concordance drop at or above which a feature is required (or must be derivable)."""
 OPTIONAL_DROP = 0.002
 """Below this, an absence is reported without a cost claim."""
+
+ABLATION_COMMAND = "python scripts/03e_feature_ablation.py --model-tag {tag}"
+"""How to produce the table a model needs before the measured rule can apply."""
 
 STRUCTURALLY_REQUIRED = ("loan_amnt",)
 """Required whatever the measurement says: there is no application without an
@@ -180,9 +183,33 @@ class FeatureCosts:
             return "required"
         return "optional_costed" if drop >= OPTIONAL_DROP else "optional_free"
 
+    @property
+    def measured(self) -> bool:
+        """Whether this model has an ablation table, and so a measured split."""
+        return bool(self.per_feature)
+
     def required(self) -> list[str]:
         return sorted({f for f in list(self.per_feature) + list(STRUCTURALLY_REQUIRED)
                        if self.tier(f) == "required"})
+
+    def rule_note(self) -> str:
+        """One sentence naming the rule in force, so a reader knows which it was.
+
+        Two rules exist and only one can apply to a given model. With a table, a
+        feature is required because its absence was measured to cost at least
+        REQUIRED_DROP concordance. Without one, a provisional list stands in, and
+        the note says how to replace it with measurement.
+        """
+        if self.measured:
+            return (f"Required features come from the measured ablation of "
+                    f"{self.model_tag or 'this model'} ({self.source}): a feature is "
+                    f"required when its absence costs at least {REQUIRED_DROP:.3f} "
+                    f"concordance. {len(self.required())} of {len(self.per_feature)} "
+                    f"features qualify.")
+        return ("This model has no ablation table, so a provisional list of required "
+                "columns is used instead of measurement. To replace it with measured "
+                "costs: "
+                + ABLATION_COMMAND.format(tag=self.model_tag or "TAG"))
 
     def cost_of(self, features) -> float:
         """Conservative upper bound on the joint cost: drops are not additive."""
