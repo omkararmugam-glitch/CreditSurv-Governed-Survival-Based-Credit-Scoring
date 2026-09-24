@@ -68,7 +68,8 @@ from .explain.parallel import (Ledger, explain_rows_parallel, keep_awake,
 from .explain.survshap import explain_survshap
 from .explain.tree_shap import explain_tree_shap
 from .features.build import build_design_matrix
-from .pipeline import load_model_bundle, resolve_data_source
+from .pipeline import (load_feature_frame, load_model_bundle,
+                       resolve_data_source)
 from .provenance import PROJECT_ROOT, build_stamp, file_fingerprint
 
 __all__ = ["CORE_REQUIRED", "PROVISIONAL_REQUIRED", "ALIASES", "OUTPUT_NAMES", "BatchError",
@@ -536,10 +537,13 @@ def load_context(cfg: Config, model_tag: str | None = None,
             "The data this model was trained on is no longer on disk, so new "
             "applicants cannot be compared against it.", f"missing: {src}",
             "Restore it, or train a model on data that is present.")
-    cols = list(spec.all_columns) + ["duration_months", "event"]
-    train = pd.read_parquet(src, columns=cols)
-    for c in [c for c in train.columns if train[c].dtype == object]:
-        train[c] = train[c].astype("category")
+    try:
+        train = load_feature_frame(src, spec)
+    except ValueError as exc:
+        raise BatchError(
+            f"The '{model_tag}' model cannot be compared against the data it was "
+            f"trained on.", str(exc),
+            "Retrain the model, or restore the data file it was trained on.") from exc
     idx = bundle["train_idx"].intersection(train.index)
     train = train.loc[idx] if len(idx) else train
     if len(train) > d.background_rows:

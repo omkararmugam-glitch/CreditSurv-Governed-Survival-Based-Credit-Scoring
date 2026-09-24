@@ -34,7 +34,7 @@ from creditsurv.config import load_config  # noqa: E402
 from creditsurv.explain.adverse_action import build_adverse_action_notice  # noqa: E402
 from creditsurv.explain.parallel import explain_rows_parallel, suggest_workers  # noqa: E402
 from creditsurv.features.build import build_design_matrix  # noqa: E402
-from creditsurv.pipeline import load_model_bundle, resolve_data_source  # noqa: E402
+from creditsurv.pipeline import load_feature_frame, load_model_bundle, resolve_data_source  # noqa: E402
 from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
 from creditsurv.reporting.tables import to_markdown, write_json, write_table  # noqa: E402
 
@@ -108,10 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     bundle, model_path = load_model_bundle(cfg.paths.models_dir, args.model_tag)
     model = bundle["artefacts"]["discrete_hazard"]
     src = resolve_data_source(bundle, cfg, args.model_tag)
-    cols = list(bundle["spec"].all_columns) + ["duration_months", "event"]
-    df = pd.read_parquet(src, columns=cols)
-    for c in [c for c in df.columns if df[c].dtype == object]:
-        df[c] = df[c].astype("category")
+    df = load_feature_frame(src, bundle["spec"], verbose=True)
     rows = df.loc[df.index.intersection(pd.Index(row_index))]
     if len(rows) != len(reference):
         print(f"ERROR: {len(rows)} of {len(reference)} referenced rows found in "

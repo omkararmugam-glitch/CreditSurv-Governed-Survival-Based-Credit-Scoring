@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from creditsurv.config import load_config  # noqa: E402
 from creditsurv.features.build import build_design_matrix  # noqa: E402
 from creditsurv.models.evaluate import CensoringModel, evaluate_survival  # noqa: E402
-from creditsurv.pipeline import load_model_bundle, resolve_data_source  # noqa: E402
+from creditsurv.pipeline import load_feature_frame, load_model_bundle, resolve_data_source  # noqa: E402
 from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
 from creditsurv.reporting.tables import (  # noqa: E402
     model_comparison_table,
@@ -83,10 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"recorded data source: {src}")
     print(f"recorded split: {bundle.get('split')}")
 
-    cols = list(spec.all_columns) + ["duration_months", "event"]
-    df = pd.read_parquet(src, columns=cols)
-    for c in [c for c in df.columns if df[c].dtype == object]:
-        df[c] = df[c].astype("category")
+    df = load_feature_frame(src, spec, verbose=True)
     test_idx = bundle["test_idx"].intersection(df.index)
     test = df.loc[test_idx]
     if args.sample and args.sample < len(test):

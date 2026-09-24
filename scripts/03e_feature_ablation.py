@@ -37,7 +37,7 @@ from creditsurv.models.evaluate import (  # noqa: E402
     concordance_index,
     cumulative_dynamic_auc,
 )
-from creditsurv.pipeline import load_model_bundle, resolve_data_source  # noqa: E402
+from creditsurv.pipeline import load_feature_frame, load_model_bundle, resolve_data_source  # noqa: E402
 from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
 from creditsurv.reporting.tables import to_markdown, write_json, write_table  # noqa: E402
 
@@ -131,10 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     src = resolve_data_source(bundle, cfg, args.model_tag)
     print(f"model {args.model_tag}; data {src}")
 
-    cols = list(spec.all_columns) + ["duration_months", "event"]
-    df = pd.read_parquet(src, columns=cols)
-    for c in [c for c in df.columns if df[c].dtype == object]:
-        df[c] = df[c].astype("category")
+    df = load_feature_frame(src, spec, verbose=True)
     test = df.loc[bundle["test_idx"].intersection(df.index)]
     if args.sample and args.sample < len(test):
         test = test.sample(args.sample, random_state=cfg.model.seed)

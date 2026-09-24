@@ -15,6 +15,8 @@ import pickle
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 from .provenance import PROJECT_ROOT
 
 __all__ = [
@@ -22,7 +24,94 @@ __all__ = [
     "resolve_data_source",
     "encode_data_source",
     "parse_year_range",
+    "load_feature_frame",
+    "DERIVATION_INPUTS",
+    "FEATURE_EXTRAS",
 ]
+
+DERIVATION_INPUTS: frozenset[str] = frozenset({
+    "fico_range_low", "fico_range_high", "emp_length", "installment", "annual_inc",
+    "loan_amnt", "term", "int_rate"})
+"""Raw columns the derived features are computed from.
+
+Read whenever a model's features are read, even when the spec does not name them,
+because the features that depend on them do. Kept beside
+:func:`creditsurv.features.build.add_derived_features`, which is the only thing that
+uses them."""
+
+FEATURE_EXTRAS: tuple[str, ...] = ("duration_months", "event")
+"""The survival outcome. Every stage that evaluates or explains a model needs it."""
+
+
+def load_feature_frame(src, spec, *, extras=FEATURE_EXTRAS, columns=(),
+                       verbose: bool = False) -> pd.DataFrame:
+    """Read exactly the columns a model needs, computing the ones the file lacks.
+
+    A model trained with ``--with-derived`` has features the parquet never stored:
+    ``fico_midpoint``, ``emp_length_years``, ``term_months`` and the income ratios are
+    computed at training time, not written back. Asking pyarrow for them by name fails
+    with ``No match for fico_midpoint``, which is how two separate stages broke
+    (FINDINGS 7j). So the raw inputs are read and the derived columns are computed
+    here, exactly as training computed them, in the one place every stage goes
+    through.
+
+    Parameters
+    ----------
+    spec:
+        The bundle's :class:`~creditsurv.features.build.FeatureSpec`. Every one of its
+        columns is guaranteed present in the result, or the call raises.
+    extras, columns:
+        Further columns to read: ``extras`` defaults to the survival outcome,
+        ``columns`` is for anything a particular stage also wants (``grade``,
+        ``issue_year``). Both are read when stored and reported when not.
+    verbose:
+        Print which features were computed rather than read. On for the stage
+        scripts, off inside the application.
+
+    Raises
+    ------
+    ValueError
+        If a spec feature is neither stored in the file nor derivable from it, naming
+        every such feature. Silently dropping one would change the model's inputs.
+    """
+    # Imported here: features.build imports nothing from this module, and keeping the
+    # import local avoids making that a rule anyone has to remember.
+    from .derive import derive_features
+    from .features.build import add_derived_features
+    import pyarrow.parquet as pq
+
+    src = Path(src)
+    wanted = list(dict.fromkeys(list(spec.all_columns) + list(extras)
+                                + list(columns)))
+    stored = set(pq.read_schema(src).names)
+    to_read = sorted((set(wanted) | DERIVATION_INPUTS) & stored)
+    frame = add_derived_features(pd.read_parquet(src, columns=to_read))
+    # Anything still absent goes through the derivation rules the upload path uses,
+    # so a column is derivable here exactly when it is derivable there. term_months
+    # from "36 months" is the case this exists for: training builds it in Stage 1, so
+    # the labelled parquet stores it, but a file that stores only `term` should not be
+    # treated as missing a feature it plainly contains.
+    short = [c for c in spec.all_columns if c not in frame.columns]
+    if short:
+        frame, _derived, _blocked = derive_features(frame, short)
+    for col in [c for c in frame.columns if frame[c].dtype == object]:
+        frame[col] = frame[col].astype("category")
+
+    computed = [c for c in wanted if c not in stored and c in frame.columns]
+    if verbose and computed:
+        print(f"computed from raw columns rather than read: {', '.join(computed)}")
+
+    absent = [c for c in spec.all_columns if c not in frame.columns]
+    if absent:
+        raise ValueError(
+            f"{absent} are features of this model but are neither stored in "
+            f"{src.name} nor derivable from it, so it cannot be evaluated or scored "
+            f"against this file.")
+    missing_extras = [c for c in list(extras) + list(columns)
+                      if c not in frame.columns]
+    if verbose and missing_extras:
+        print(f"note: {', '.join(missing_extras)} not in {src.name}")
+    return frame
 
 
 def load_model_bundle(models_dir: Path, model_tag: str) -> tuple[dict, Path]:

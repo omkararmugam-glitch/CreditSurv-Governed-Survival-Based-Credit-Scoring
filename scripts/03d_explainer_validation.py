@@ -40,7 +40,7 @@ from creditsurv.explain.adverse_action import build_adverse_action_notice  # noq
 from creditsurv.explain.survshap import explain_survshap  # noqa: E402
 from creditsurv.explain.tree_shap import explain_tree_shap  # noqa: E402
 from creditsurv.features.build import build_design_matrix  # noqa: E402
-from creditsurv.pipeline import load_model_bundle, resolve_data_source  # noqa: E402
+from creditsurv.pipeline import load_feature_frame, load_model_bundle, resolve_data_source  # noqa: E402
 from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
 from creditsurv.reporting.tables import to_markdown, write_json, write_table  # noqa: E402
 
@@ -121,10 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     src = resolve_data_source(bundle, cfg, args.model_tag)
     print(f"model {args.model_tag}; data {src}")
 
-    cols = list(bundle["spec"].all_columns) + ["duration_months", "event"]
-    df = pd.read_parquet(src, columns=cols)
-    for c in [c for c in df.columns if df[c].dtype == object]:
-        df[c] = df[c].astype("category")
+    df = load_feature_frame(src, bundle["spec"], verbose=True)
     test = df.loc[bundle["test_idx"].intersection(df.index)]
     print(f"test split: {len(test):,} loans")
 
