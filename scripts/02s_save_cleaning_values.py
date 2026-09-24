@@ -22,13 +22,22 @@ import time
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from creditsurv.cleaning import fit_values, policy_from_config  # noqa: E402
 from creditsurv.config import load_config  # noqa: E402
+from creditsurv.features.build import add_derived_features  # noqa: E402
 from creditsurv.pipeline import load_model_bundle, resolve_data_source  # noqa: E402
 from creditsurv.provenance import build_stamp, guard_outputs  # noqa: E402
+
+
+DERIVATION_INPUTS: frozenset[str] = frozenset({
+    "fico_range_low", "fico_range_high", "emp_length", "installment", "annual_inc",
+    "loan_amnt"})
+"""Raw columns :func:`add_derived_features` needs. Read even when the spec does not
+name them, because the features that depend on them do."""
 
 
 def sidecar_path(models_dir: Path, tag: str) -> Path:
@@ -62,11 +71,27 @@ def main(argv: list[str] | None = None) -> int:
               f"Retrain the model to get cleaning values.", file=sys.stderr)
         return 2
 
+    # A model trained with --with-derived has features the parquet does not store:
+    # fico_midpoint, the income ratios, emp_length_years. Asking pyarrow for them by
+    # name fails ("No match for fico_midpoint"), so the raw inputs are read and the
+    # derived columns are computed here, exactly as training computed them.
     cols = list(spec.all_columns)
     print(f"reading {src}")
-    df = pd.read_parquet(src, columns=cols)
+    stored = set(pq.read_schema(src).names)
+    to_read = sorted((set(cols) | DERIVATION_INPUTS) & stored)
+    df = add_derived_features(pd.read_parquet(src, columns=to_read))
     for c in [c for c in df.columns if df[c].dtype == object]:
         df[c] = df[c].astype("category")
+    computed = sorted(set(cols) - stored)
+    if computed:
+        print(f"computed from raw columns rather than read: {', '.join(computed)}")
+    absent = [c for c in cols if c not in df.columns]
+    if absent:
+        print(f"ERROR: {absent} are features of the {args.model_tag} model but are "
+              f"neither stored in {Path(src).name} nor derivable from it, so its "
+              f"cleaning values cannot be fitted. Nothing has been written.",
+              file=sys.stderr)
+        return 2
     train_idx = bundle["train_idx"].intersection(df.index)
     if len(train_idx) == 0:
         print("ERROR: the bundle's recorded training index does not match this data "
