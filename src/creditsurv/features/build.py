@@ -179,6 +179,27 @@ def default_spec(
     )
 
 
+MIN_EVENTS_PER_LEVEL = 100
+"""Events a one-hot level needs before Cox estimates its own coefficient.
+
+A level with fewer leaves the partial likelihood nearly flat in that direction, and
+Newton-Raphson walks a long way along a flat direction: three Idaho loans with one
+default between them produced a fitted log hazard ratio of -385 and a test
+concordance of 0.497 (FINDINGS 7h). Below the threshold the level is pooled into the
+reference rather than estimated, which is what a reviewer would do by hand. 100 is
+where the standard error of a log hazard ratio falls under about 0.2, so the estimate
+starts to mean something; the exact figure matters much less than not being 3.
+
+Only the ``"cox"`` flavour is affected. The gradient-boosted model handles a rare
+category natively and its results do not change.
+"""
+
+MIN_EVENTS_FOR_POOLING = 2_000
+"""Below this many events in total, no level is pooled: the sample is too small for a
+threshold of 100 to mean anything, and the concordance guard in Stage 2 catches a fit
+that fails anyway."""
+
+
 def build_design_matrix(
     df: pd.DataFrame,
     spec: FeatureSpec | None = None,
@@ -190,6 +211,7 @@ def build_design_matrix(
     standardisation: dict[str, tuple[float, float]] | None = None,
     fill_values: dict[str, float] | None = None,
     reference_columns: list[str] | None = None,
+    min_events_per_level: int = MIN_EVENTS_PER_LEVEL,
 ) -> DesignMatrix:
     """Build a model-ready matrix.
 
@@ -202,6 +224,9 @@ def build_design_matrix(
         Pass the values learned on the training split to transform a test split
         identically. Leaving them ``None`` learns them from ``df``, which is only
         correct for the training split itself.
+    min_events_per_level:
+        ``"cox"`` only: pool a one-hot level with fewer events than this into the
+        reference level. See :data:`MIN_EVENTS_PER_LEVEL`. Zero keeps every level.
     """
     if flavour not in {"gbm", "cox"}:
         raise ValueError(f"flavour must be 'gbm' or 'cox', got {flavour!r}")
@@ -254,6 +279,24 @@ def build_design_matrix(
             if cats
             else pd.DataFrame(index=work.index)
         )
+        # A level with almost no events cannot carry a hazard ratio, and trying to
+        # give it one is what lets the partial likelihood run away (FINDINGS 7h).
+        # Those rows join the reference level. Done on the training split only; a
+        # test split reindexes to the columns the training split kept.
+        if reference_columns is None and min_events_per_level and not dummies.empty:
+            events = pd.to_numeric(work[event_col], errors="coerce").fillna(0).to_numpy()
+            if int(events.sum()) >= MIN_EVENTS_FOR_POOLING:
+                sparse = []
+                for col in dummies.columns:
+                    n_events = int(events[dummies[col].to_numpy() == 1].sum())
+                    if n_events < min_events_per_level:
+                        dropped[str(col)] = (
+                            f"{n_events} events in this level, fewer than "
+                            f"{min_events_per_level}; pooled into the reference level")
+                        sparse.append(col)
+                if sparse:
+                    dummies = dummies.drop(columns=sparse)
+
         X = pd.concat([num, dummies], axis=1)
 
         learned_fill = dict(fill_values or {})

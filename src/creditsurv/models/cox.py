@@ -40,12 +40,20 @@ class CoxModel:
     Parameters
     ----------
     penalizer:
-        Ridge penalty. A small non-zero default is deliberate: this design matrix
-        has ~100 one-hot columns including rare state and purpose levels, and an
-        unpenalised fit on those is numerically fragile.
+        Ridge penalty. A non-zero default is deliberate: this design matrix has ~140
+        one-hot columns including rare state and purpose levels, and an unpenalised
+        fit on those is numerically fragile.
+
+        It was 0.01, and that was measured to be too weak. lifelines adds the penalty
+        to the summed partial log-likelihood rather than the mean, so its effect
+        shrinks as rows are added: at 60,000 rows an 0.01 ridge held the fit together
+        and at 300,000 it did not, giving |coef| up to 458 and a test concordance of
+        0.497 (FINDINGS 7h). At 0.05 the same fit converges, and on the pre-registered
+        holdout it reproduces the published Cox concordance of 0.6602 to four decimal
+        places, so the wider ridge costs nothing measurable.
     """
 
-    penalizer: float = 0.01
+    penalizer: float = 0.05
     l1_ratio: float = 0.0
     fitter: object | None = None
     feature_names: tuple[str, ...] = ()

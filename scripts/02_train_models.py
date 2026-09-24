@@ -17,8 +17,10 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import math
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -60,6 +62,59 @@ from creditsurv.reporting.tables import (  # noqa: E402
     write_json,
     write_table,
 )
+
+
+COX_PENALIZER = 0.05
+"""Ridge strength for the Cox baseline. See :class:`creditsurv.models.cox.CoxModel`
+for why this is not 0.01 any more."""
+
+COX_MAX_ABS_COEF = 10.0
+"""A fitted log hazard ratio larger than this is a numerical failure, not an effect.
+
+exp(10) is a hazard ratio of 22,000. Nothing in consumer credit multiplies default
+risk twenty-thousand-fold, so a coefficient this size means the partial likelihood
+walked a long way along a direction the data barely constrains (FINDINGS 7h). The
+largest honest coefficient this project has fitted is 3.1.
+"""
+
+DEGENERATE_C_BAND = 0.02
+"""How close a test concordance may come to 0.5 before the run is treated as failed.
+
+0.5 is what a coin achieves. A fitted model landing there has not found a weak
+signal -- it has not fitted at all, and the usual cause is a partial likelihood that
+ran away along a direction the design matrix cannot identify (FINDINGS 7h). Publishing
+such a model is worse than publishing nothing, because its metrics look like a result.
+The band is two-sided: 0.48 is as broken as 0.52, just with the sign flipped.
+"""
+
+
+def degenerate_fit(res) -> str | None:
+    """A sentence naming the problem, or None when the model ranks better than chance."""
+    c = float(res.concordance)
+    if not math.isfinite(c):
+        return f"{res.model}: test concordance is {c}, which is not a number"
+    if abs(c - 0.5) <= DEGENERATE_C_BAND:
+        return (f"{res.model}: test concordance {c:.4f} is within "
+                f"{DEGENERATE_C_BAND} of 0.5, which is what random ranking scores")
+    return None
+
+
+def refuse_degenerate(res, tag: str, *, written: str = "") -> int:
+    """Print the failure and return the exit code, or 0 when the fit is sound."""
+    problem = degenerate_fit(res)
+    if not problem:
+        return 0
+    print(f"\nERROR: the {tag!r} run produced a model that does not rank: {problem}.",
+          file=sys.stderr)
+    print("Nothing has been saved: no model bundle and no metrics file, so no result "
+          "can cite this fit.", file=sys.stderr)
+    if written:
+        print(f"Already written before the failure, and now stale: {written}",
+              file=sys.stderr)
+    print("Most likely cause: a Cox design matrix with an unidentified direction, "
+          "which lets the partial likelihood run away (check the coefficient table "
+          "for |coef| in the hundreds). See FINDINGS 7h.", file=sys.stderr)
+    return 5
 
 
 RESERVED_TAGS: dict[str, dict] = {
@@ -385,8 +440,23 @@ def main() -> int:
         )
         print(f"[cox] design matrix {dm_tr.X.shape}, dropped {len(dm_tr.dropped)} columns")
         t0 = time.time()
-        cox = CoxModel(penalizer=0.01).fit(dm_tr.X, dm_tr.duration, dm_tr.event)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            cox = CoxModel(penalizer=COX_PENALIZER).fit(
+                dm_tr.X, dm_tr.duration, dm_tr.event)
         print(f"[cox] fitted in {time.time() - t0:.1f}s")
+        for w in caught:
+            print(f"[cox] {w.category.__name__}: {str(w.message).splitlines()[0]}")
+        failed = [w for w in caught if "failed to converge" in str(w.message)]
+        largest = cox.fitter.params_.abs().max()
+        if failed or largest > COX_MAX_ABS_COEF:
+            print(f"\nERROR: the Cox fit for {tag!r} did not converge "
+                  f"(largest |coefficient| {largest:.1f}). Nothing has been saved.",
+                  file=sys.stderr)
+            print("A coefficient this large is not a strong effect; it is the "
+                  "partial likelihood running away along a direction the design "
+                  "matrix cannot identify. See FINDINGS 7h.", file=sys.stderr)
+            return 5
 
         cox_surv = cox.predict_survival(dm_te.X, times)
         cox_risk = cox.predict_risk(dm_te.X)
@@ -397,6 +467,9 @@ def main() -> int:
             censoring=censoring, risk=cox_risk, calibration_at=24.0,
         )
         print(res)
+        refused = refuse_degenerate(res, tag)
+        if refused:
+            return refused
         results.append(res)
         by_year("cox", cox_surv, cox_risk, dm_te.duration.to_numpy(),
                 dm_te.event.to_numpy())
@@ -479,6 +552,10 @@ def main() -> int:
             censoring=censoring, calibration_at=24.0,
         )
         print(res)
+        refused = refuse_degenerate(
+            res, tag, written=f"the Cox tables and figures for {tag}")
+        if refused:
+            return refused
         results.append(res)
         by_year("discrete_hazard", gbm_surv, None, dg_te.duration.to_numpy(),
                 dg_te.event.to_numpy())
