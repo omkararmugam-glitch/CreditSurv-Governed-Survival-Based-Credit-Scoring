@@ -36,14 +36,14 @@
         "split": "test_2016",
         "n": 434407,
         "event_rate": 0.1571,
-        "concordance": 0.5217,
-        "ibs": 0.1399,
-        "auc_6m": 0.5002,
-        "auc_12m": 0.5001,
-        "auc_18m": 0.5001,
-        "auc_24m": 0.5001,
-        "auc_30m": 0.5001,
-        "auc_36m": 0.5004,
+        "concordance": 0.6698,
+        "ibs": 0.1117,
+        "auc_6m": 0.6705,
+        "auc_12m": 0.6776,
+        "auc_18m": 0.6808,
+        "auc_24m": 0.6826,
+        "auc_30m": 0.6801,
+        "auc_36m": 0.618,
         "unreliable_horizons": [],
         "high_variance_horizons": [
           36
@@ -62,12 +62,12 @@
         "split": "test_2017",
         "n": 443579,
         "event_rate": 0.0883,
-        "concordance": 0.5163,
-        "ibs": 0.0827,
-        "auc_6m": 0.5002,
-        "auc_12m": 0.5001,
-        "auc_18m": 0.5001,
-        "auc_24m": 0.5003,
+        "concordance": 0.6676,
+        "ibs": 0.0724,
+        "auc_6m": 0.6651,
+        "auc_12m": 0.6737,
+        "auc_18m": 0.6736,
+        "auc_24m": 0.6747,
         "unreliable_horizons": [],
         "high_variance_horizons": [],
         "n_controls_by_horizon": {
@@ -82,10 +82,10 @@
         "split": "test_2018",
         "n": 495140,
         "event_rate": 0.0179,
-        "concordance": 0.5207,
-        "ibs": 0.0247,
-        "auc_6m": 0.4996,
-        "auc_12m": 0.5002,
+        "concordance": 0.658,
+        "ibs": 0.0229,
+        "auc_6m": 0.6619,
+        "auc_12m": 0.6721,
         "unreliable_horizons": [],
         "high_variance_horizons": [],
         "n_controls_by_horizon": {
@@ -257,14 +257,14 @@
       "split": "test",
       "n": 1373126,
       "event_rate": 0.0847,
-      "concordance": 0.5225,
-      "ibs": 0.1219,
-      "auc_6m": 0.5,
-      "auc_12m": 0.5001,
-      "auc_18m": 0.5002,
-      "auc_24m": 0.5002,
-      "auc_30m": 0.5003,
-      "auc_36m": 0.5006,
+      "concordance": 0.6719,
+      "ibs": 0.1004,
+      "auc_6m": 0.6672,
+      "auc_12m": 0.6736,
+      "auc_18m": 0.6728,
+      "auc_24m": 0.6707,
+      "auc_30m": 0.6674,
+      "auc_36m": 0.6053,
       "unreliable_horizons": [],
       "high_variance_horizons": [
         36
@@ -307,9 +307,9 @@
   ],
   "provenance": {
     "stage": "02_train_models",
-    "created_at": "2026-09-24T16:07:29+00:00",
+    "created_at": "2026-09-24T20:20:39+00:00",
     "code": {
-      "commit": "14d23994843a173db433484fc6d4a0d613985fb4",
+      "commit": "023b9f2ef8d99d4eed773cee5958f7de18abbded",
       "code_dirty": false,
       "dirty_files": []
     },
@@ -336,7 +336,7 @@
       "skip_cox": false,
       "skip_gbm": false,
       "tag": "holdout_applicant_nogeo",
-      "overwrite": false
+      "overwrite": true
     },
     "inputs": {
       "data": {
@@ -351,9 +351,9 @@
       "model": {
         "path": "outputs/models/02_models_holdout_applicant_nogeo.pkl",
         "exists": true,
-        "bytes": 43962562,
-        "mtime": "2026-09-24T16:07:29+00:00",
-        "sha256": "dbcf36657a901c56c889849ad6fa84b69b11bf5d8a4a7b5e1b8a47091ba2074a"
+        "bytes": 43951438,
+        "mtime": "2026-09-24T20:20:39+00:00",
+        "sha256": "09546188d54bc010b448312b34cc13af57568afb40f355bf5c41bc9777509b7a"
       }
     },
     "environment": {

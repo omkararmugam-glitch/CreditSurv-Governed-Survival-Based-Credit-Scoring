@@ -1,0 +1,645 @@
+{
+  "cleaning": {
+    "rows_in": 2257790,
+    "rows_out": 2257790,
+    "policy_version": "v1-parity",
+    "values_version": "v1-parity",
+    "values_fitted_rows": 1806232,
+    "dropped_by_rule": {},
+    "coerced_text": {},
+    "unreadable_numbers": {},
+    "imputed": {},
+    "clipped": {},
+    "out_of_range": {
+      "loan_amnt": 10261,
+      "annual_inc": 20275,
+      "dti": 22307,
+      "open_acc": 11766,
+      "total_acc": 16615,
+      "revol_bal": 11276,
+      "revol_util": 11101,
+      "mort_acc": 6710,
+      "delinq_2yrs": 9561,
+      "inq_last_6mths": 6808,
+      "pub_rec": 7769,
+      "pub_rec_bankruptcies": 2958,
+      "tax_liens": 8820,
+      "acc_now_delinq": 8778,
+      "delinq_amnt": 7172,
+      "chargeoff_within_12_mths": 1419,
+      "collections_12_mths_ex_med": 2754,
+      "mths_since_last_delinq": 5603,
+      "mths_since_last_record": 3013,
+      "mths_since_last_major_derog": 4553,
+      "tot_coll_amt": 10981,
+      "tot_cur_bal": 21924,
+      "total_rev_hi_lim": 21330,
+      "acc_open_past_24mths": 8228,
+      "avg_cur_bal": 21895,
+      "bc_open_to_buy": 10917,
+      "bc_util": 10895,
+      "mo_sin_old_il_acct": 21099,
+      "mo_sin_old_rev_tl_op": 20571,
+      "mo_sin_rcnt_rev_tl_op": 10858,
+      "mo_sin_rcnt_tl": 10548,
+      "mths_since_recent_bc": 10844,
+      "mths_since_recent_bc_dlq": 3264,
+      "mths_since_recent_inq": 9278,
+      "mths_since_recent_revol_delinq": 4959,
+      "num_accts_ever_120_pd": 9939,
+      "num_actv_bc_tl": 7839,
+      "num_actv_rev_tl": 9851,
+      "num_bc_sats": 10033,
+      "num_bc_tl": 14921,
+      "num_il_tl": 10806,
+      "num_op_rev_tl": 10110,
+      "num_rev_accts": 9474,
+      "num_rev_tl_bal_gt_0": 7900,
+      "num_sats": 11585,
+      "num_tl_30dpd": 5831,
+      "num_tl_90g_dpd_24m": 7313,
+      "num_tl_op_past_12m": 9335,
+      "pct_tl_nvr_dlq": 10503,
+      "tot_hi_cred_lim": 21794,
+      "total_bal_ex_mort": 22081,
+      "total_bc_limit": 11060,
+      "total_il_high_credit_limit": 10941
+    },
+    "unseen_categories": {},
+    "pooled_to_other": {},
+    "missing_columns": [
+      "fico_midpoint",
+      "emp_length_years",
+      "loan_to_income",
+      "log_annual_inc"
+    ],
+    "label_stage_drops": {
+      "excluded_status": 2749,
+      "missing_end_date": 102,
+      "term_overrun": 27
+    }
+  },
+  "values": {
+    "version": "v1-parity",
+    "fitted_rows": 1806232,
+    "fitted_on": "outputs\\data\\accepted_labeled.parquet",
+    "categories": {
+      "purpose": [
+        "debt_consolidation",
+        "credit_card",
+        "home_improvement",
+        "other",
+        "major_purchase",
+        "medical",
+        "small_business",
+        "car",
+        "vacation",
+        "moving",
+        "house",
+        "wedding",
+        "renewable_energy",
+        "educational"
+      ],
+      "home_ownership": [
+        "MORTGAGE",
+        "RENT",
+        "OWN",
+        "ANY",
+        "OTHER",
+        "NONE"
+      ],
+      "verification_status": [
+        "Source Verified",
+        "Not Verified",
+        "Verified"
+      ],
+      "application_type": [
+        "Individual",
+        "Joint App"
+      ],
+      "initial_list_status": [
+        "w",
+        "f"
+      ]
+    },
+    "rare_levels": {},
+    "ranges": {
+      "loan_amnt": [
+        1200.0,
+        40000.0
+      ],
+      "annual_inc": [
+        13000.0,
+        350000.0
+      ],
+      "dti": [
+        1.0,
+        53.82550048828125
+      ],
+      "open_acc": [
+        2.0,
+        33.0
+      ],
+      "total_acc": [
+        4.0,
+        65.0
+      ],
+      "revol_bal": [
+        0.0,
+        136607.84499999997
+      ],
+      "revol_util": [
+        0.0,
+        99.4000015258789
+      ],
+      "mort_acc": [
+        0.0,
+        9.0
+      ],
+      "delinq_2yrs": [
+        0.0,
+        5.0
+      ],
+      "inq_last_6mths": [
+        0.0,
+        4.0
+      ],
+      "pub_rec": [
+        0.0,
+        3.0
+      ],
+      "pub_rec_bankruptcies": [
+        0.0,
+        2.0
+      ],
+      "tax_liens": [
+        0.0,
+        2.0
+      ],
+      "acc_now_delinq": [
+        0.0,
+        0.0
+      ],
+      "delinq_amnt": [
+        0.0,
+        0.0
+      ],
+      "chargeoff_within_12_mths": [
+        0.0,
+        1.0
+      ],
+      "collections_12_mths_ex_med": [
+        0.0,
+        1.0
+      ],
+      "mths_since_last_delinq": [
+        1.0,
+        82.0
+      ],
+      "mths_since_last_record": [
+        5.0,
+        118.0
+      ],
+      "mths_since_last_major_derog": [
+        2.0,
+        95.0
+      ],
+      "tot_coll_amt": [
+        0.0,
+        8263.0
+      ],
+      "tot_cur_bal": [
+        1468.8599853515625,
+        820093.375
+      ],
+      "total_rev_hi_lim": [
+        1800.0,
+        208000.0
+      ],
+      "acc_open_past_24mths": [
+        0.0,
+        17.0
+      ],
+      "avg_cur_bal": [
+        262.0,
+        91095.828125
+      ],
+      "bc_open_to_buy": [
+        0.0,
+        97188.0
+      ],
+      "bc_util": [
+        0.0,
+        101.5999984741211
+      ],
+      "mo_sin_old_il_acct": [
+        8.0,
+        302.0
+      ],
+      "mo_sin_old_rev_tl_op": [
+        22.0,
+        521.0
+      ],
+      "mo_sin_rcnt_rev_tl_op": [
+        0.0,
+        108.0
+      ],
+      "mo_sin_rcnt_tl": [
+        0.0,
+        57.0
+      ],
+      "mths_since_recent_bc": [
+        0.0,
+        186.0
+      ],
+      "mths_since_recent_bc_dlq": [
+        1.0,
+        95.0
+      ],
+      "mths_since_recent_inq": [
+        0.0,
+        23.0
+      ],
+      "mths_since_recent_revol_delinq": [
+        1.0,
+        90.0
+      ],
+      "num_accts_ever_120_pd": [
+        0.0,
+        8.0
+      ],
+      "num_actv_bc_tl": [
+        0.0,
+        13.0
+      ],
+      "num_actv_rev_tl": [
+        0.0,
+        19.0
+      ],
+      "num_bc_sats": [
+        0.0,
+        17.0
+      ],
+      "num_bc_tl": [
+        1.0,
+        26.0
+      ],
+      "num_il_tl": [
+        0.0,
+        40.0
+      ],
+      "num_op_rev_tl": [
+        1.0,
+        27.0
+      ],
+      "num_rev_accts": [
+        2.0,
+        45.0
+      ],
+      "num_rev_tl_bal_gt_0": [
+        0.0,
+        19.0
+      ],
+      "num_sats": [
+        2.0,
+        33.0
+      ],
+      "num_tl_30dpd": [
+        0.0,
+        0.0
+      ],
+      "num_tl_90g_dpd_24m": [
+        0.0,
+        3.0
+      ],
+      "num_tl_op_past_12m": [
+        0.0,
+        9.0
+      ],
+      "pct_tl_nvr_dlq": [
+        53.79999923706055,
+        100.0
+      ],
+      "percent_bc_gt_75": [
+        0.0,
+        100.0
+      ],
+      "tot_hi_cred_lim": [
+        6000.0,
+        939435.0625
+      ],
+      "total_bal_ex_mort": [
+        992.0,
+        300247.53125
+      ],
+      "total_bc_limit": [
+        0.0,
+        130100.0
+      ],
+      "total_il_high_credit_limit": [
+        0.0,
+        256577.5625
+      ],
+      "term_months": [
+        36.0,
+        60.0
+      ]
+    },
+    "clip_bounds": {
+      "loan_amnt": [
+        1000.0,
+        40000.0
+      ],
+      "annual_inc": [
+        4000.0,
+        600000.0
+      ],
+      "dti": [
+        0.18000000715255737,
+        106.36219787597656
+      ],
+      "open_acc": [
+        2.0,
+        41.0
+      ],
+      "total_acc": [
+        3.0,
+        80.0
+      ],
+      "revol_bal": [
+        0.0,
+        265443.5380000002
+      ],
+      "revol_util": [
+        0.0,
+        102.0999984741211
+      ],
+      "mort_acc": [
+        0.0,
+        12.0
+      ],
+      "delinq_2yrs": [
+        0.0,
+        9.0
+      ],
+      "inq_last_6mths": [
+        0.0,
+        5.0
+      ],
+      "pub_rec": [
+        0.0,
+        5.0
+      ],
+      "pub_rec_bankruptcies": [
+        0.0,
+        3.0
+      ],
+      "tax_liens": [
+        0.0,
+        5.0
+      ],
+      "acc_now_delinq": [
+        0.0,
+        1.0
+      ],
+      "delinq_amnt": [
+        0.0,
+        837.7690000000875
+      ],
+      "chargeoff_within_12_mths": [
+        0.0,
+        1.0
+      ],
+      "collections_12_mths_ex_med": [
+        0.0,
+        2.0
+      ],
+      "mths_since_last_delinq": [
+        0.0,
+        99.0
+      ],
+      "mths_since_last_record": [
+        0.0,
+        119.0
+      ],
+      "mths_since_last_major_derog": [
+        1.0,
+        117.0
+      ],
+      "tot_coll_amt": [
+        0.0,
+        22200.484375
+      ],
+      "tot_cur_bal": [
+        140.0,
+        1254398.375
+      ],
+      "total_rev_hi_lim": [
+        500.0,
+        347420.6875
+      ],
+      "acc_open_past_24mths": [
+        0.0,
+        22.0
+      ],
+      "avg_cur_bal": [
+        35.0,
+        142192.84375
+      ],
+      "bc_open_to_buy": [
+        0.0,
+        142469.28125
+      ],
+      "bc_util": [
+        0.0,
+        107.5
+      ],
+      "mo_sin_old_il_acct": [
+        3.0,
+        372.0
+      ],
+      "mo_sin_old_rev_tl_op": [
+        14.0,
+        600.0
+      ],
+      "mo_sin_rcnt_rev_tl_op": [
+        0.0,
+        147.0
+      ],
+      "mo_sin_rcnt_tl": [
+        0.0,
+        94.0
+      ],
+      "mths_since_recent_bc": [
+        0.0,
+        285.0
+      ],
+      "mths_since_recent_bc_dlq": [
+        0.0,
+        115.0
+      ],
+      "mths_since_recent_inq": [
+        0.0,
+        24.0
+      ],
+      "mths_since_recent_revol_delinq": [
+        0.0,
+        112.0
+      ],
+      "num_accts_ever_120_pd": [
+        0.0,
+        13.0
+      ],
+      "num_actv_bc_tl": [
+        0.0,
+        17.0
+      ],
+      "num_actv_rev_tl": [
+        0.0,
+        25.0
+      ],
+      "num_bc_sats": [
+        0.0,
+        23.0
+      ],
+      "num_bc_tl": [
+        0.0,
+        33.0
+      ],
+      "num_il_tl": [
+        0.0,
+        54.0
+      ],
+      "num_op_rev_tl": [
+        1.0,
+        34.0
+      ],
+      "num_rev_accts": [
+        2.0,
+        55.0
+      ],
+      "num_rev_tl_bal_gt_0": [
+        0.0,
+        24.0
+      ],
+      "num_sats": [
+        2.0,
+        41.0
+      ],
+      "num_tl_30dpd": [
+        0.0,
+        1.0
+      ],
+      "num_tl_90g_dpd_24m": [
+        0.0,
+        7.0
+      ],
+      "num_tl_op_past_12m": [
+        0.0,
+        12.0
+      ],
+      "pct_tl_nvr_dlq": [
+        39.099998474121094,
+        100.0
+      ],
+      "percent_bc_gt_75": [
+        0.0,
+        100.0
+      ],
+      "tot_hi_cred_lim": [
+        3000.0,
+        1417420.625
+      ],
+      "total_bal_ex_mort": [
+        39.0,
+        452924.75
+      ],
+      "total_bc_limit": [
+        0.0,
+        182000.0
+      ],
+      "total_il_high_credit_limit": [
+        0.0,
+        374956.46875
+      ],
+      "term_months": [
+        36.0,
+        60.0
+      ]
+    },
+    "medians": {
+      "loan_amnt": 12937.5,
+      "annual_inc": 65000.0,
+      "dti": 17.84000015258789,
+      "open_acc": 11.0,
+      "total_acc": 22.0,
+      "revol_bal": 11323.0,
+      "revol_util": 50.29999923706055,
+      "mort_acc": 1.0,
+      "delinq_2yrs": 0.0,
+      "inq_last_6mths": 0.0,
+      "pub_rec": 0.0,
+      "pub_rec_bankruptcies": 0.0,
+      "tax_liens": 0.0,
+      "acc_now_delinq": 0.0,
+      "delinq_amnt": 0.0,
+      "chargeoff_within_12_mths": 0.0,
+      "collections_12_mths_ex_med": 0.0,
+      "mths_since_last_delinq": 31.0,
+      "mths_since_last_record": 74.0,
+      "mths_since_last_major_derog": 44.0,
+      "tot_coll_amt": 0.0,
+      "tot_cur_bal": 79223.0,
+      "total_rev_hi_lim": 25400.0,
+      "acc_open_past_24mths": 4.0,
+      "avg_cur_bal": 7336.0,
+      "bc_open_to_buy": 5443.0,
+      "bc_util": 60.20000076293945,
+      "mo_sin_old_il_acct": 130.0,
+      "mo_sin_old_rev_tl_op": 164.0,
+      "mo_sin_rcnt_rev_tl_op": 8.0,
+      "mo_sin_rcnt_tl": 6.0,
+      "mths_since_recent_bc": 14.0,
+      "mths_since_recent_bc_dlq": 37.0,
+      "mths_since_recent_inq": 5.0,
+      "mths_since_recent_revol_delinq": 33.0,
+      "num_accts_ever_120_pd": 0.0,
+      "num_actv_bc_tl": 3.0,
+      "num_actv_rev_tl": 5.0,
+      "num_bc_sats": 4.0,
+      "num_bc_tl": 7.0,
+      "num_il_tl": 6.0,
+      "num_op_rev_tl": 7.0,
+      "num_rev_accts": 12.0,
+      "num_rev_tl_bal_gt_0": 5.0,
+      "num_sats": 11.0,
+      "num_tl_30dpd": 0.0,
+      "num_tl_90g_dpd_24m": 0.0,
+      "num_tl_op_past_12m": 2.0,
+      "pct_tl_nvr_dlq": 100.0,
+      "percent_bc_gt_75": 37.5,
+      "tot_hi_cred_lim": 114253.0,
+      "total_bal_ex_mort": 37853.0,
+      "total_bc_limit": 16300.0,
+      "total_il_high_credit_limit": 32689.0,
+      "term_months": 36.0
+    }
+  },
+  "policy": {
+    "version": "v1-parity",
+    "coerce_numeric_text": true,
+    "align_categories": true,
+    "unseen_category_to_other": false,
+    "rare_category_min_count": 0,
+    "clip_numeric": false,
+    "clip_quantiles": [
+      0.001,
+      0.999
+    ],
+    "range_quantiles": [
+      0.005,
+      0.995
+    ],
+    "drop_duplicate_ids": false
+  }
+}
