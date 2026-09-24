@@ -46,6 +46,7 @@ from creditsurv.models.discrete_hazard import (  # noqa: E402
     expansion_row_estimate,
 )
 from creditsurv.models.evaluate import CensoringModel, evaluate_survival  # noqa: E402
+from creditsurv.io import schema as sch  # noqa: E402
 from creditsurv.pipeline import encode_data_source  # noqa: E402
 from creditsurv.provenance import (  # noqa: E402
     build_stamp,
@@ -122,6 +123,12 @@ def main() -> int:
                          "raw columns, so the derived features are absent (see "
                          "FINDINGS section 7c). Off by default: turning it on changes "
                          "the model's inputs, so it belongs to a new --tag.")
+    ap.add_argument("--add-features", default=None,
+                    help="comma-separated columns to ADD to the spec, for features "
+                         "the default lists omit. 'term_months' is the case this "
+                         "exists for: loan term is known before any decision but is "
+                         "in no schema list (FINDINGS 7c). Leakage-checked, and each "
+                         "added name is recorded in the metrics JSON.")
     ap.add_argument("--drop-features", default=None,
                     help="comma-separated features to remove from the spec, e.g. "
                          "'installment,installment_to_income' for a model that has "
@@ -216,6 +223,35 @@ def main() -> int:
     spec_columns = (add_derived_features(df.head(1)).columns if args.with_derived
                     else df.columns)
     spec = default_spec(spec_columns, extended=True, with_lc_grade=with_grade)
+    added_by_request: list[str] = []
+    if args.add_features:
+        wanted = [c.strip() for c in args.add_features.split(",") if c.strip()]
+        absent = [c for c in wanted if c not in df.columns]
+        if absent:
+            print(f"ERROR: --add-features names {absent}, which are not columns in "
+                  f"{src.name}. Nothing has been run.", file=sys.stderr)
+            return 2
+        already = [c for c in wanted if c in spec.all_columns]
+        if already:
+            print(f"ERROR: --add-features names {already}, already in the spec. "
+                  f"Nothing has been run.", file=sys.stderr)
+            return 2
+        # A leakage check before anything else: this flag is the one way a column
+        # outside the curated lists can reach a model.
+        sch.assert_no_leakage(list(spec.all_columns) + wanted)
+        numeric_adds = [c for c in wanted
+                        if pd.api.types.is_numeric_dtype(df[c])]
+        categorical_adds = [c for c in wanted if c not in numeric_adds]
+        spec = FeatureSpec(
+            numeric=tuple(spec.numeric) + tuple(numeric_adds),
+            categorical=tuple(spec.categorical) + tuple(categorical_adds),
+            structural_missing=spec.structural_missing)
+        added_by_request = wanted
+        print(f"  added by request: {', '.join(wanted)}"
+              + (f" (numeric: {', '.join(numeric_adds)})" if numeric_adds else "")
+              + (f" (categorical: {', '.join(categorical_adds)})"
+                 if categorical_adds else ""))
+
     dropped_by_request: list[str] = []
     if args.drop_features:
         wanted = [c.strip() for c in args.drop_features.split(",") if c.strip()]
@@ -500,6 +536,7 @@ def main() -> int:
         "negative_subsample": float(args.negative_subsample),
         "with_lc_grade": bool(with_grade),
         "with_derived": bool(args.with_derived),
+        "added_by_request": added_by_request,
         "dropped_by_request": dropped_by_request,
         "n_train": int(len(train_idx)),
         "n_test": int(len(test_idx)),

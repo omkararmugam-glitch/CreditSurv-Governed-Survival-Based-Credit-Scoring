@@ -300,3 +300,26 @@ class TestSpecFlagsForVariantModels:
         assert "loan_amnt" in unpriced.numeric          # the amount is not pricing
         for lender_field in ("grade", "sub_grade", "int_rate"):
             assert lender_field not in unpriced.all_columns
+
+
+class TestAddFeaturesFlag:
+    """--add-features is the only way a column outside the curated schema lists can
+    reach a model, so it is leakage-checked and recorded."""
+
+    def test_term_months_can_be_added_and_is_not_leakage(self):
+        spec = default_spec(pd.DataFrame({
+            "loan_amnt": [1000.0], "annual_inc": [50000.0], "dti": [10.0],
+            "purpose": ["car"]}).columns)
+        assert "term_months" not in spec.all_columns          # the omission itself
+        sch.assert_no_leakage(list(spec.all_columns) + ["term_months"])
+        widened = FeatureSpec(numeric=tuple(spec.numeric) + ("term_months",),
+                              categorical=spec.categorical,
+                              structural_missing=spec.structural_missing)
+        assert "term_months" in widened.numeric
+
+    def test_a_leaking_column_is_refused(self):
+        """The flag cannot be used to smuggle an outcome column into a model."""
+        spec = default_spec(pd.DataFrame({"loan_amnt": [1000.0]}).columns)
+        leaking = next(iter(sch.LEAKAGE_COLUMNS))
+        with pytest.raises(sch.LeakageError):
+            sch.assert_no_leakage(list(spec.all_columns) + [leaking])

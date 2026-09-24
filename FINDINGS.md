@@ -1011,6 +1011,72 @@ fault, a unit change or a corrupted column. Two consequences:
   flags them, and does not clip them, which is the behaviour cleaning already has
   (`clip_numeric` off).
 
+## 7f. Three pre-decision facts the model ignores, and one horizon that does not fit
+
+### Why credit score, employment length and term are absent
+
+All three are known about an applicant before any decision, and none reaches a
+model. The reasons differ, and only one of them is a decision:
+
+| fact | in the data as | why it is absent |
+|---|---|---|
+| credit score | `fico_range_low`, `fico_range_high` | **a defect.** `default_spec` drops the raw bounds as superseded by `fico_midpoint`, but runs before `add_derived_features` computes it (section 7c) |
+| employment length | `emp_length` | **the same defect.** Superseded by `emp_length_years`, which the spec never sees |
+| loan term | `term`, parsed to `term_months` | **an omission.** `term_months` is built in Stage 1 and used for stratified sampling and for the term-overrun rule, but it is in no schema feature list, so nothing ever put it in a model |
+
+None of the three is excluded on fair-lending or leakage grounds. Score and
+employment length are lawful to disclose and are standard credit-risk inputs; term
+is chosen by the applicant and is the single strongest determinant of how long the
+loan is exposed. The model has been predicting 36-month default probability without
+knowing whether the loan runs for 36 months or 60.
+
+Stage 2 now takes `--with-derived` (score, employment length and the three ratios)
+and `--add-features term_months`, both off by default so no existing result moves,
+and both leakage-checked. Section 7g reports what they are worth once the variants
+are trained.
+
+### The decision rule uses a 36-month horizon for 60-month loans
+
+Measured on 60,000 loans from the full model's test split:
+
+| | 36-month loans | 60-month loans |
+|---|---|---|
+| share of the portfolio | 71.4% | 28.6% |
+| mean predicted default probability by 36 months | 0.1835 | 0.2181 |
+| mean predicted default probability by 60 months | 0.2570 | 0.2997 |
+| observed default rate | 0.1006 | 0.1619 |
+| rejected by the current rule (PD36 >= 0.30) | 14.5% | 23.7% |
+
+**Using a 36-month probability for a 60-month loan is not appropriate as a measure
+of that loan's risk.** It stops counting two years before the loan does, and the
+model puts about 8 percentage points of default probability in that window
+(0.2181 -> 0.2997). The current rule is not blind to term -- 60-month loans are
+already rejected at 23.7% against 14.5% -- but that happens through correlated
+features, not because the horizon matches the exposure.
+
+**What it would cost to fix naively.** Applying the same 0.30 cutoff to the
+probability at each loan's own term end rejects **44.0%** of 60-month loans instead
+of 23.7%. That flips 20.3% of 60-month decisions and 5.8% of all decisions. Such a
+change is a credit-policy decision dressed as a technical correction, so it is not
+made here.
+
+**Two term-aware rules worth considering, neither applied:**
+
+1. **Probability over the actual term, with term-specific cutoffs.** Reject on
+   PD-at-term-end, using 0.30 for 36-month loans and **0.409** for 60-month loans --
+   the cutoff measured to leave today's 60-month rejection rate unchanged. The
+   quantity being compared then matches the exposure, and the change in who is
+   rejected is deliberate rather than incidental.
+2. **An annualised rule, one number for every term.** Reject when the default
+   probability per year of exposure exceeds a single threshold. Today's 0.30 over
+   three years is 0.10 per year, which for a 60-month loan means a PD60 cutoff of
+   0.50. This is the cleaner rule -- term-neutral by construction, and it states the
+   policy in a unit a credit committee can argue about -- but its effect on the
+   60-month rejection rate has not been measured yet, and it must be before it could
+   be adopted.
+
+The published threshold is unchanged until that decision is taken.
+
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
 <!-- keep:preregistration-settings -->
