@@ -1157,6 +1157,79 @@ made here.
 
 The published threshold is unchanged until that decision is taken.
 
+### Horizon options, with the approval rate each produces
+
+Two separate objections to the published rule are now on the table. It measures a
+36-month default probability for loans that run 60 months, so a fifth of the 60-month
+book's risk lies beyond the horizon the decision uses (measured below: mean PD rises
+from 0.2167 at 36 months to 0.2982 at 60 for those loans). And discrimination at 36
+months is visibly worse than at 12: 0.6103 against 0.7098 for `full_applicant_nogeo`,
+0.6388 against 0.7118 for `full`.
+
+**The second objection is weaker than it looks, and the reason is censoring depth.**
+Uno's IPCW AUC at horizon *t* is estimated from the loans still under observation at
+*t*, and that population collapses:
+
+| horizon | loans still under observation (of 451,558) |
+|---|---|
+| 6 months | 380,924 |
+| 12 months | 289,562 |
+| 24 months | 150,452 |
+| 36 months | **34,651 (7.7%)** |
+
+On the out-of-time holdout it is worse still -- 11,287 of 1,373,126, which is 0.8%, and
+section 2 already flags horizon 36 there as high-variance. So the fall from 0.71 to 0.61
+is measured on a shrinking and increasingly selected slice, with inverse-probability
+weights above 20x, and it is not by itself evidence that the model discriminates worse
+at three years. It is evidence that **we know much less about 36 months than about 12**.
+That argues for shortening the horizon on grounds of measurability, which is a different
+and better argument than "the model is worse there".
+
+**What each option would do.** Measured on 200,000 held-out loans scored by `full`, the
+model that scores uploads today. 28.9% of them run 60 months. Today's rule rejects
+16.95%.
+
+| option | rule | rejected | vs today | decisions changed |
+|---|---|---|---|---|
+| **A** | today: PD(36) >= 0.30 | 16.95% | -- | -- |
+| **B1** | PD(12) >= 0.30, threshold unchanged | **0.18%** | -16.77pp | 16.77% newly approved |
+| **B2** | PD(12) >= 0.0929, rate-preserving | 16.95% | 0.00pp | 2.09% each way |
+| **C1** | PD at the loan's own term >= 0.30 | 22.82% | +5.87pp | 5.87% newly rejected |
+| **C2** | 36m >= 0.30, 60m >= 0.4089, rate-preserving per term | 16.95% | 0.00pp | 0.25% each way |
+| **D** | annualised 11.21%/yr: 36m >= 0.30, 60m >= 0.4481 | 15.35% | -1.60pp | 1.60% newly approved |
+| **E** | PD(24) >= 0.2111, rate-preserving | 16.95% | 0.00pp | 0.57% each way |
+
+Three things to read off it.
+
+**B1 is the trap.** Carrying the 0.30 threshold to a 12-month horizon is not a
+tightening or a neutral change: it approves all but 0.18% of applicants, because almost
+nobody reaches a 30% chance of default inside a year. Any change of horizon has to
+restate the threshold, or the rule silently stops rejecting anyone. This is the single
+most important reason not to move the horizon without re-deriving the cutoff.
+
+**C1 is the honest version of the term objection, and it is a credit-policy change.**
+Judging each loan at its own maturity raises rejection from 16.95% to 22.82% overall and
+from **23.12% to 43.41% among 60-month loans**. That is defensible -- a 60-month loan
+genuinely is riskier and the current rule does not see two of its five years -- but it
+declines an extra 5.9% of all applicants, which is a lending decision and not a
+modelling one.
+
+**C2 and E are rate-preserving reframings.** They change what the rule *means* without
+changing how many people it declines: C2 judges each loan at its own maturity with a
+term-specific cutoff (0.4089 for 60-month loans, which is close to the 0.4481 that the
+annualised reading implies, so the two readings nearly agree), and E moves to a
+24-month horizon where 150,452 loans are still observed rather than 34,651. Of the
+three rate-preserving options, **E changes the fewest decisions (0.57%) and buys the
+largest improvement in measurability**, while C2 is the one that answers the term
+objection directly and changes only 0.25%.
+
+**Recommendation, for a decision that is not mine to make.** If the goal is to answer
+the term objection at constant approval rate, C2. If the goal is to stand on firmer
+measurement, E. If the goal is to price the term risk properly and accept a smaller
+book, C1. What should not happen is B1, and what should not happen quietly is any of
+them: each changes the meaning of a published threshold. **No change has been made** --
+`decision.reject_at_or_above` is 0.30 and `decision.horizon_months` is 36.
+
 ## 7g. The schema layer: what an uploaded file is allowed to look like
 
 Until now a file was refused unless its columns were named exactly as in training.
@@ -1285,6 +1358,93 @@ The two degenerate models are **not** trusted: their Cox numbers are withdrawn a
 must not be cited. Their GBM numbers (0.6938 and 0.6927) come from a separate,
 converged fit and are sound. Retraining them under the fix replaces both.
 
+### Retrained under the fix
+
+| model | Cox concordance, before | after |
+|---|---|---|
+| `holdout_applicant` | 0.502 (degenerate) | **0.6740** |
+| `holdout_applicant_nogeo` | 0.502 (degenerate) | **0.6719** |
+
+Both now sit where a Cox baseline on this data belongs -- between the 0.6602 of the
+published holdout and the 0.6767 of `holdout_derived` -- and both converged. The
+predicted figure from the diagnostic was 0.6708 on a 200,000-loan subsample; the full
+test set gives 0.6740, which is the agreement one would expect between a subsample and
+the whole.
+
+### A second numerical finding: three saturated Cox predictions
+
+Checked while confirming the fix, because "overflow encountered in exp" was still
+appearing in Cox scoring. It is a genuine saturation, not a harmless warning, and it
+is caused by data rather than by the fit.
+
+In `holdout_applicant`, `loan_to_income` reaches a **standardised value of 308,013**.
+The cause is arithmetic: `loan_to_income` is `loan_amnt / annual_inc`, and
+`add_derived_features` maps an income of exactly zero to missing but leaves an income
+of a few dollars alone. A $10,000 loan against a recorded annual income of about $1
+gives a ratio four orders of magnitude beyond anything in training, and the 2007-2015
+training window contains no such case, so the standard deviation it is divided by is
+small.
+
+The consequences, measured on 200,000 held-out loans:
+
+| model | largest log partial hazard | rows where exp() overflows | rows with S(36) exactly 0 |
+|---|---|---|---|
+| `holdout_applicant` | 6,194.95 | 6 | 3 |
+| `full_applicant_nogeo` | 3.36 | 0 | 0 |
+| `full` | 3.89 | 0 | 0 |
+
+**Nothing becomes NaN**, and no survival curve is non-finite; the failure mode is
+saturation, not corruption. Three of 200,000 applicants get a survival probability of
+exactly zero -- a default probability of exactly 1.0 -- on the strength of a recorded
+income of a few dollars.
+
+Two things keep this out of the decision path today. It appears only in the **Cox
+baseline**, and the application scores with the gradient-boosted model, which splits on
+values rather than exponentiating them and is indifferent to the outlier. And it
+appears only where the training window happened to exclude such incomes: the two
+all-years models show a largest linear predictor of 3.4 and 3.9, with no overflow at
+all. So this is recorded as a known limit of the Cox baseline rather than fixed:
+clipping an implausible income would be a cleaning rule, and cleaning rules that change
+a trained model are not changed without approval. If it is to be fixed, the choice is
+between treating an income below some floor as missing (a cleaning rule, affecting
+models) and clipping the linear predictor before exponentiating (a numerical guard,
+affecting nothing else).
+
+## 7j. One loader for a model's features
+
+The same bug appeared twice, in two unrelated stages: `02s_save_cleaning_values.py` and
+`03e_feature_ablation.py` both failed with `No match for fico_midpoint`. Four other
+stages and the application itself carried it unnoticed, because it only fires for a
+model trained with `--with-derived`.
+
+The cause is a mismatch nobody had written down. `fico_midpoint`, `emp_length_years`,
+`loan_to_income`, `log_annual_inc` and `installment_to_income` are **computed** at
+training time and never written back to the parquet, so a stage that reads
+`spec.all_columns` from the file asks pyarrow for columns that do not exist. Every
+stage had its own four-line copy of that read.
+
+There is now one function, `creditsurv.pipeline.load_feature_frame`, and six call
+sites use it: stages 02r, 02s, 03d, 03e, 03f and `creditsurv.batch.load_context`, which
+is the path both the upload page and `06_score_upload.py` take. It reads the stored
+columns, computes the derived ones exactly as training computed them, says which were
+computed rather than read, and raises with the names listed if a feature is neither
+stored nor derivable -- silently dropping one would change the model's inputs.
+
+Writing the test found two further gaps, both now closed:
+
+* `term_months` was derivable on the upload path and not on the read path. The loader
+  now falls through to the same `creditsurv.derive` rules the upload path uses, so a
+  column is derivable in one place exactly when it is derivable in the other.
+* `int_rate` is an input to the instalment derivation and was not in the list of raw
+  columns to read, so that derivation could never have fired.
+
+A test asserts that each stage holds *this* function rather than a copy, that none of
+them selects feature columns by name any more, and that the list of raw inputs read
+covers every input the derivation rules consume -- so the next derivation that is added
+cannot quietly fail for want of its inputs.
+
+
+
 ## 7i. What five models measured: the score is worth about as much as the price
 
 All five are full-data out-of-time holdouts (train 2007-2015, test 2016-2018,
@@ -1328,6 +1488,61 @@ collect a field, the retrained figure is the relevant one; for a scoring run tha
 a file with the column missing, the ablation figure is. A model with no geography at all
 is also the easier one to defend under fair lending, and 0.0011 concordance is a very
 small price for removing that argument.
+
+## 7k. The proposed scoring model, on the same split as the current one
+
+`full_applicant_nogeo` is the specification 7i argued for, trained on all years with
+the same settings as the current primary model, so the two are measured on **the same
+451,558 held-out loans**.
+
+| | `full` (scores uploads today) | `full_applicant_nogeo` (proposed) |
+|---|---|---|
+| features | 61 | 64 |
+| lender pricing (`installment`, `installment_to_income`) | yes | **no** |
+| geography (`addr_state`) | yes | **no** |
+| credit score, employment length, term | **no** | yes |
+| GBM concordance | **0.6973** | 0.6958 |
+| 12-month AUC | **0.7118** | 0.7098 |
+| IBS | **0.0998** | 0.1005 |
+| Cox concordance | 0.6700 | 0.6723 |
+
+**It is 0.0015 concordance and 0.0020 AUC worse, and that is the whole accuracy cost.**
+What it buys is not accuracy: it can score an applicant nobody has priced yet, it
+carries no geography for a fair-lending argument to attach to, and it actually uses the
+credit score that every adverse-action notice has been reporting in its FCRA block
+since section 7c was written.
+
+**`fico_midpoint` is its second strongest feature by gain** (129,620), behind only
+`period` -- which is not an applicant characteristic but the discrete-time baseline
+hazard's own index -- and marginally ahead of `acc_open_past_24mths` (129,510). Among
+real applicant features it ranks first. That is the clearest evidence of what the 7c
+defect cost: the single most standard variable in consumer credit, absent from every
+earlier model by accident, goes straight to the top of the list when it is allowed in.
+`loan_to_income` is fourth and `term_months` eighth, so three of the model's eight
+strongest features were unavailable to every result in sections 2 to 7.
+
+### The 600-tree cap is not binding in any way that matters
+
+`full_applicant_nogeo` used all 600 trees and `best_iteration` equals the cap, so early
+stopping never fired. That looks like a model cut short, and it is not. Evaluating the
+saved booster on its own 1,236,512-row validation expansion at increasing numbers of
+trees:
+
+| trees | validation logloss | change |
+|---|---|---|
+| 50 | 0.0833188 | |
+| 100 | 0.0827460 | -0.0005728 |
+| 200 | 0.0823559 | -0.0003901 |
+| 300 | 0.0822442 | -0.0001117 |
+| 400 | 0.0822038 | -0.0000404 |
+| 500 | 0.0821865 | -0.0000173 |
+| 600 | 0.0821667 | -0.0000198 |
+
+The last 100 trees delivered **1.7%** of the total improvement from 50 trees, a change
+of 0.024% in the loss. The curve is flat, not still falling: early stopping did not
+fire because there was nothing left to stop for. A higher cap would change the fourth
+decimal place of a concordance at best, so **no retrain is warranted**, and the cap
+stays at 600.
 
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
