@@ -1077,6 +1077,51 @@ made here.
 
 The published threshold is unchanged until that decision is taken.
 
+## 7g. The schema layer: what an uploaded file is allowed to look like
+
+Until now a file was refused unless its columns were named exactly as in training.
+That is the wrong failure: the model does not care what a column is called, only what
+is in it. `creditsurv/schema_match.py` and `creditsurv/derive.py` sit in front of the
+model and change nothing about it.
+
+**Recognition** uses three kinds of evidence, in descending order of trust: a written
+synonym table, normalised-name similarity (case, punctuation and filler words
+removed, camel case split), and the column's own content. Content can raise
+confidence and, more usefully, **veto** a name: a column called `annual_income`
+holding values between 0 and 1 is not an income, and is refused rather than renamed.
+Two columns are never mapped onto one feature -- that choice belongs to a person, so
+neither is pre-selected and the conflict is stated. Nothing is applied until it is
+confirmed; the upload page shows the proposal with a confidence and a reason per
+column, editable, and the command line takes `--map column=feature`.
+
+**Derivation** computes what follows exactly from other columns: the monthly
+instalment from amount, rate and term by the standard amortisation formula, the FICO
+midpoint from the reported range, the band top from the band bottom, the two income
+ratios, and `term_months` from a term written as "36 months". These are arithmetic,
+not imputation, and the distinction is the point: a derived value is the number the
+lender's own system would produce, while an imputed one is a guess that makes the
+output look more certain than it is. Every derived column is reported as derived, in
+the dashboard and in `run_summary.csv`.
+
+**Required and optional** come from the measured ablation in 7d, with the thresholds
+recorded there: required at or above 0.010 concordance, optional-with-a-cost between
+0.002 and 0.010, optional-and-free below that. For the full model that makes
+`installment`, `loan_amnt` and `annual_inc` required -- and `installment` is
+required-or-derivable, which is what lets a raw-applicant file through. A file
+missing an optional feature is scored, and the dashboard reports the measured cost of
+its absence rather than an opinion about it.
+
+**Explanations never cite a column the file did not contain.** A feature absent from
+the upload is dropped from the attributions before reasons are selected, because
+"your revolving balance" is not a reason anyone can act on when no revolving balance
+was supplied.
+
+**Messages** say what happened and what to do: what was recognised and as what, what
+was derived and how, what is missing, and for each missing column either "not in
+file" or which inputs a derivation would have needed -- for example
+`Recognised: open_credit_lines -> open_acc` and
+`Missing: revol_bal (not in file); installment (needs int_rate)`.
+
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
 <!-- keep:preregistration-settings -->
