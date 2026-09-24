@@ -262,27 +262,30 @@ def project(tmp_path_factory):
         + "diagnostic:\n  rejected_sample_size: 2500\n",
         encoding="utf-8")
     r = _run("02_train_models.py", cfg, "--split", "out_of_time", "--oot-cutoff", "2016",
-             "--tag", "holdout", "--cox-max-rows", "5000")
+             "--tag", "oot_fixture", "--cox-max-rows", "5000")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     return root, cfg, acc, r
 
 
+# These fixtures write under 'oot_fixture', not 'holdout': that tag is reserved for
+# the pre-registered full-data run and 02_train_models.py refuses anything else under
+# it (tests/test_reserved_tags.py).
 class TestStage2OutOfTime:
     def test_cutoff_is_respected(self, project):
         root, *_ = project
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         assert max(m["train_years"]) == 2015 and min(m["test_years"]) == 2016
         assert m["oot_cutoff"] == 2016 and m["split_scheme"] == "out_of_time"
 
     def test_bundle_split_has_no_year_overlap(self, project):
         root, _, acc, _ = project
-        b = pickle.load(open(root / "models" / "02_models_holdout.pkl", "rb"))
+        b = pickle.load(open(root / "models" / "02_models_oot_fixture.pkl", "rb"))
         assert acc.loc[b["train_idx"], "issue_year"].max() <= 2015
         assert acc.loc[b["test_idx"], "issue_year"].min() >= 2016
 
     def test_early_stopping_uses_training_loans_only(self, project):
         root, *_ = project
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         es = m["early_stopping"]
         assert es["n_fit"] + es["n_val"] == m["n_train"]
         assert es["n_val"] == round(0.1 * m["n_train"])
@@ -290,33 +293,33 @@ class TestStage2OutOfTime:
 
     def test_ipcw_fitted_on_the_evaluation_set(self, project):
         root, *_ = project
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         assert m["ipcw_fitted_on"] == "test"
 
     def test_per_vintage_results_for_both_models(self, project):
         root, *_ = project
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         for model in ("cox", "discrete_hazard"):
             assert set(m["results_by_vintage"][model]) == {"2016", "2017", "2018"}
 
     def test_vintage_horizons_stop_where_follow_up_stops(self, project):
         """2018 loans are observed ~14 months at most: no 24-month AUC for them."""
         root, *_ = project
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         v2018 = m["results_by_vintage"]["discrete_hazard"]["2018"]
         assert "auc_24m" not in v2018 and "auc_6m" in v2018
 
     def test_data_source_recorded_in_bundle_and_metrics(self, project):
         root, *_ = project
-        b = pickle.load(open(root / "models" / "02_models_holdout.pkl", "rb"))
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        b = pickle.load(open(root / "models" / "02_models_oot_fixture.pkl", "rb"))
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         assert b["data_source"].endswith("dev_sample.parquet")
         assert m["data_source"] == b["data_source"]
         assert b["split"]["oot_cutoff"] == 2016
 
     def test_high_variance_horizons_are_reported(self, project):
         root, *_ = project
-        m = json.loads((root / "tables" / "02_metrics_holdout.json").read_text())
+        m = json.loads((root / "tables" / "02_metrics_oot_fixture.json").read_text())
         assert "high_variance_horizons" in m["results"][0]
         assert "n_controls_by_horizon" in m["results"][0]
 
@@ -335,15 +338,15 @@ class TestStage2OutOfTime:
 class TestStage3ReadsTheBundlesData:
     def test_explain_uses_recorded_source_not_the_tag(self, project):
         root, cfg, *_ = project
-        r = _run("03_explain.py", cfg, "--tag", "holdout", "--n-explain", "8",
+        r = _run("03_explain.py", cfg, "--tag", "oot_fixture", "--n-explain", "8",
                  "--skip-naive")
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-        out = json.loads((root / "tables" / "03_explain_holdout.json").read_text())
+        out = json.loads((root / "tables" / "03_explain_oot_fixture.json").read_text())
         assert out["provenance"]["inputs"]["data"]["path"].endswith("dev_sample.parquet")
 
     def test_noise_floor_script_runs_and_does_not_block_stage3(self, project):
         root, cfg, *_ = project
-        r = _run("03c_noise_floor.py", cfg, "--tag", "nf", "--model-tag", "holdout",
+        r = _run("03c_noise_floor.py", cfg, "--tag", "nf", "--model-tag", "oot_fixture",
                  "--n-explain", "6")
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
         nf = json.loads((root / "tables" / "03c_noise_floor_nf.json").read_text())
@@ -353,7 +356,7 @@ class TestStage3ReadsTheBundlesData:
 
     def test_legacy_bundle_with_new_tag_fails_loudly(self, project):
         root, cfg, *_ = project
-        b = pickle.load(open(root / "models" / "02_models_holdout.pkl", "rb"))
+        b = pickle.load(open(root / "models" / "02_models_oot_fixture.pkl", "rb"))
         b.pop("data_source")
         pickle.dump(b, open(root / "models" / "02_models_legacy.pkl", "wb"))
         r = _run("03_explain.py", cfg, "--tag", "legacy", "--n-explain", "4",
@@ -364,10 +367,10 @@ class TestStage3ReadsTheBundlesData:
 class TestStage4Holdout:
     def test_diagnostic_only_with_year_filters(self, project):
         root, cfg, acc, _ = project
-        r = _run("04_reject_inference.py", cfg, "--tag", "holdout", "--diagnostic-only",
+        r = _run("04_reject_inference.py", cfg, "--tag", "oot_fixture", "--diagnostic-only",
                  "--accepted-years", "2016-2018", "--rejected-years", "2016-2018")
         assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-        out = json.loads((root / "tables" / "04_reject_inference_holdout.json").read_text())
+        out = json.loads((root / "tables" / "04_reject_inference_oot_fixture.json").read_text())
         assert out["diagnostic_only"] is True and out["correction_applied"] is False
         assert out["explanation_shift"]["status"] == "not_run"
         comp = out["composition"]
@@ -378,7 +381,7 @@ class TestStage4Holdout:
 
     def test_year_filter_without_diagnostic_only_is_refused(self, project):
         _, cfg, *_ = project
-        r = _run("04_reject_inference.py", cfg, "--tag", "yf", "--model-tag", "holdout",
+        r = _run("04_reject_inference.py", cfg, "--tag", "yf", "--model-tag", "oot_fixture",
                  "--accepted-years", "2016-2018")
         assert r.returncode == 2 and "--diagnostic-only" in r.stderr
 
@@ -454,7 +457,8 @@ class TestReportEndToEnd:
                             "RULE: fixed in advance\n<!-- /keep:prereg -->\n")
         findings.write_text(text, encoding="utf-8")
         second = _run("05_report.py", cfg, "--tag", "full", "--findings", str(findings),
-                      "--force")
+                      "--holdout-tag", "oot_fixture",
+                      "--holdout-strat-tag", "oot_fixture_strat", "--force")
         assert second.returncode == 0, second.stderr
         after = findings.read_text(encoding="utf-8")
         assert "RULE: fixed in advance" in after
@@ -469,7 +473,7 @@ class TestReportEndToEnd:
                             "## 4. Reject inference (diagnostic-gated)\n\n## 5. Summary\n",
                             encoding="utf-8")
         before = findings.read_text(encoding="utf-8")
-        r = _run("05_report.py", cfg, "--tag", "holdout", "--findings", str(findings))
+        r = _run("05_report.py", cfg, "--tag", "oot_fixture", "--findings", str(findings))
         assert r.returncode == 2 and "out-of-time run" in r.stderr
         assert findings.read_text(encoding="utf-8") == before
 

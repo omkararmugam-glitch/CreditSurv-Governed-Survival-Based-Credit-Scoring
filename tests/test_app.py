@@ -87,7 +87,7 @@ def _finished_run(tmp_path):
                         reject_at_or_above=0.45,
                         explain_nsamples=2 * len(tb.NUMERIC + tb.CATEGORICAL),
                         explain_n_background=8, max_explained=3,
-                        background_rows=200))
+                        background_rows=200, explain_workers=1))
     train = tb._training_frame()
     dm = tb.build_design_matrix(train, tb.SPEC, flavour="gbm")
     ctx = tb.ScoringContext(

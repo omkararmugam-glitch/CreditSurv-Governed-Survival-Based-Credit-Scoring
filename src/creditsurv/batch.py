@@ -55,12 +55,16 @@ import pandas as pd
 
 from . import drift as drift_mod
 from . import eda
+from .derive import FeatureCosts, derive_features, load_costs
+from .schema_match import propose_mapping
 from .cleaning import (CleaningPolicy, CleaningReport, CleaningValues, clean,
                        fit_values, policy_from_config)   # fit_values: never called
 # here -- imported so tests/test_cleaning_values_source.py can assert that scoring
 # does not fit cleaning values.
 from .config import Config
 from .explain.adverse_action import MAX_PRINCIPAL_REASONS, build_adverse_action_notice
+from .explain.parallel import (Ledger, explain_rows_parallel, keep_awake,
+                               suggest_workers)
 from .explain.survshap import explain_survshap
 from .explain.tree_shap import explain_tree_shap
 from .features.build import build_design_matrix
@@ -74,6 +78,10 @@ __all__ = ["CORE_REQUIRED", "ALIASES", "OUTPUT_NAMES", "BatchError",
            "choose_explainer", "RUNS_DIR"]
 
 RUNS_DIR = PROJECT_ROOT / "outputs" / "runs"
+
+PARALLEL_MIN_ROWS = 32
+"""Below this many applicants to explain, one process is faster: starting workers
+and shipping the model to each costs more than the work saved."""
 
 PREVIEW_ROWS = 2_000
 """Rows kept in memory for the dashboard preview table. The whole result
@@ -212,6 +220,16 @@ class ValidationReport:
     present: list[str] = field(default_factory=list)
     id_column: str | None = None
     warnings: list[str] = field(default_factory=list)
+    recognised: dict[str, str] = field(default_factory=dict)
+    """Uploaded column -> model feature, for columns that were renamed."""
+    derived: dict[str, str] = field(default_factory=dict)
+    """Feature -> how it was computed from other columns."""
+    blocked: dict[str, list[str]] = field(default_factory=dict)
+    """Feature -> the inputs a derivation would have needed."""
+    required_missing: list[str] = field(default_factory=list)
+    optional_missing: list[str] = field(default_factory=list)
+    unused: dict[str, str] = field(default_factory=dict)
+    costs: object = None
 
     @property
     def n_features(self) -> int:
@@ -225,9 +243,43 @@ class ValidationReport:
     def ok(self) -> bool:
         return not self.missing_core
 
+    def message(self) -> str:
+        """What was recognised, what was derived, what is missing and why.
+
+        Written for whoever has to fix the file, so every missing column says either
+        "not in file" or which inputs a derivation would have needed.
+        """
+        lines = []
+        if self.recognised:
+            lines.append("Recognised: " + "; ".join(
+                f"{k} -> {v}" for k, v in self.recognised.items()))
+        if self.derived:
+            lines.append("Derived: " + "; ".join(
+                f"{k} ({v})" for k, v in self.derived.items()))
+        missing_bits = []
+        for feature in self.required_missing + self.optional_missing:
+            needed = self.blocked.get(feature)
+            if needed:
+                missing_bits.append(f"{feature} (needs {' and '.join(needed)})")
+            else:
+                missing_bits.append(f"{feature} (not in file)")
+        if missing_bits:
+            lines.append("Missing: " + "; ".join(missing_bits[:12])
+                         + (f" and {len(missing_bits) - 12} more"
+                            if len(missing_bits) > 12 else ""))
+        if self.unused:
+            lines.append("Recognised but unused by this model: " + "; ".join(
+                f"{k} ({v})" for k, v in self.unused.items()))
+        return "\n".join(lines)
+
     def to_dict(self) -> dict:
         return {"n_rows": self.n_rows, "n_features_expected": self.n_features,
                 "n_features_present": len(self.present), "present": self.present,
+                "recognised": self.recognised, "derived": self.derived,
+                "blocked": {k: list(v) for k, v in self.blocked.items()},
+                "required_missing": self.required_missing,
+                "optional_missing": self.optional_missing,
+                "recognised_but_unused": self.unused,
                 "coverage": round(self.coverage, 4), "id_column": self.id_column,
                 "mapped": self.mapped, "ignored": self.ignored,
                 "missing_core": self.missing_core,
@@ -322,7 +374,8 @@ def read_upload(data, filename: str) -> pd.DataFrame:
     return df
 
 
-def validate(df: pd.DataFrame, spec) -> tuple[pd.DataFrame, ValidationReport]:
+def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
+             mapping: dict | None = None) -> tuple[pd.DataFrame, ValidationReport]:
     """Rename known aliases, check the model's features, report the rest.
 
     Returns the frame with model-feature names, and the report. A missing *core*
@@ -330,32 +383,68 @@ def validate(df: pd.DataFrame, spec) -> tuple[pd.DataFrame, ValidationReport]:
     show every problem at once rather than one per attempt.
     """
     rep = ValidationReport(n_rows=len(df))
+    rep.proposal = None
     work = df.copy()
     work.columns = [str(c).strip() for c in work.columns]
 
     expected = set(spec.all_columns)
-    lowered = {c.lower(): c for c in work.columns}
-    renames: dict[str, str] = {}
-    for alias, target in ALIASES.items():
-        if target in expected and target not in work.columns and alias in lowered:
-            renames[lowered[alias]] = target
+    rep.id_column = next((c for c in ID_CANDIDATES if c in work.columns), None)
+
+    # 1. Recognition. A proposal, not an application: `mapping` is what a person
+    #    confirmed, and when nothing was confirmed the pre-selected high-confidence
+    #    matches are used and reported rather than applied quietly.
+    # Proposing a mapping costs real work (name similarity plus a content check per
+    # candidate), so it happens once per file: later blocks are handed the mapping
+    # the first block produced.
+    proposal = None if mapping is not None else propose_mapping(work, spec,
+                                                                values=values)
+    renames = dict(mapping) if mapping is not None else {
+        k: v for k, v in proposal.mapping().items() if k != v}
+    renames = {k: v for k, v in renames.items()
+               if k in work.columns and v not in work.columns}
     work = work.rename(columns=renames)
     rep.mapped = dict(renames)
+    rep.recognised = dict(renames)
+    rep.unused = dict(proposal.recognised_but_unused) if proposal else {}
+    rep.proposal = proposal
 
-    rep.id_column = next((c for c in ID_CANDIDATES if c in work.columns), None)
+    # 2. Derivation. Exact arithmetic from columns the file does have, never a guess.
+    wanted = [c for c in spec.all_columns if c not in work.columns]
+    work, derived, blocked = derive_features(work, wanted)
+    rep.derived, rep.blocked = derived, blocked
+
+    # 3. What is left, and which tier it falls in.
     rep.present = [c for c in spec.all_columns if c in work.columns]
     missing = [c for c in spec.all_columns if c not in work.columns]
-    rep.missing_core = [c for c in missing if c in CORE_REQUIRED]
-    rep.missing_optional = [c for c in missing if c not in CORE_REQUIRED]
+    costs = costs if costs is not None else FeatureCosts()
+    rep.costs = costs
+    required = set(costs.required()) | set(CORE_REQUIRED if not costs.per_feature
+                                           else ())
+    rep.required_missing = [c for c in missing if c in required]
+    rep.optional_missing = [c for c in missing if c not in required]
+    rep.missing_core = list(rep.required_missing)
+    rep.missing_optional = list(rep.optional_missing)
     for col in work.columns:
         if col in expected or col == rep.id_column:
             continue
-        rep.ignored[col] = UNUSED_NOTE.get(col, "not a feature of the trained model")
+        rep.ignored[col] = (rep.unused.get(col)
+                            or UNUSED_NOTE.get(col, "not a feature of the trained model"))
 
-    if rep.missing_optional:
+    if renames:
         rep.warnings.append(
-            f"{len(rep.missing_optional)} of the model's {rep.n_features} features "
-            f"are not in this file and will be treated as missing.")
+            f"{len(renames)} column(s) were recognised under another name: "
+            + ", ".join(f"{k} -> {v}" for k, v in list(renames.items())[:6])
+            + ("..." if len(renames) > 6 else ""))
+    if derived:
+        rep.warnings.append(
+            f"{len(derived)} feature(s) were computed exactly from other columns: "
+            + ", ".join(derived) + ". They are marked as derived in the outputs.")
+    if rep.optional_missing:
+        detail = costs.describe(rep.optional_missing)
+        rep.warnings.append(
+            f"{len(rep.optional_missing)} of the model's {rep.n_features} features "
+            f"are not in this file and are treated as missing"
+            + (f". Measured cost: {detail}" if detail else "."))
     if rep.ignored:
         rep.warnings.append(
             f"{len(rep.ignored)} column(s) in the file are not model features and "
@@ -647,10 +736,13 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", Path(name).stem)[:40] or "upload"
 
 
-CAP_NOTE = "reasons not generated: explanation cap reached"
-"""What a rejected applicant past ``decision.max_explained`` is marked with. Never
-blank: a declined applicant with no stated reasons is a compliance gap, so the row
-says so and the count is shown on the dashboard."""
+CAP_NOTE = "reasons not generated: run stopped before this row"
+"""What a rejected applicant without reasons is marked with. Every rejected
+applicant is explained, so this appears only when a run was stopped before
+finishing -- and because explanations are seeded per applicant and written to a
+ledger as they complete, re-running continues from that row instead of starting
+again. Never blank: a declined applicant with no stated reasons is a compliance
+gap, so the row says so and the count is shown on the dashboard."""
 
 
 def _reason_columns(reasons: dict, positions, upto: int) -> dict:
@@ -663,6 +755,25 @@ def _reason_columns(reasons: dict, positions, upto: int) -> dict:
                                       if p in reasons and len(reasons[p]) >= i else ""
                                       for p in positions]
     return out
+
+
+def _without_features(expl, absent: set):
+    """Drop features the file never had from an explanation.
+
+    A notice must not state a reason based on a column that was not in the file: the
+    model treats it as missing, and "your revolving balance" is not a reason anyone
+    can act on when no revolving balance was supplied.
+    """
+    import dataclasses
+
+    keep = [i for i, name in enumerate(expl.feature_names) if name not in absent]
+    if len(keep) == len(expl.feature_names):
+        return expl
+    names = tuple(expl.feature_names[i] for i in keep)
+    phi = expl.phi[:, keep, ...]
+    values = expl.feature_values[[n for n in names if n in expl.feature_values.columns]]
+    return dataclasses.replace(expl, phi=phi, feature_names=names,
+                               feature_values=values)
 
 
 def choose_explainer(ctx: ScoringContext, requested: str | None = None) -> str:
@@ -693,7 +804,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
               model_name: str | None = None, threshold: float | None = None,
               max_explained: int | None = None, runs_dir: Path | None = None,
               run_dir: Path | None = None, chunk_rows: int | None = None,
-              explainer: str | None = None,
+              explainer: str | None = None, mapping: dict | None = None,
               progress=None, ctx: ScoringContext | None = None) -> BatchResult:
     """Score an upload end to end, in row blocks, and write this run's files.
 
@@ -759,22 +870,50 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     approved_path = stamp_dir / "approved_applicants.csv"
     rejected_path = stamp_dir / "rejected_applicants.csv"
 
+    # A cap of 0 (the default) means no cap: every rejected applicant is explained.
+    budget = None if max_explained <= 0 else max_explained
+    workers = int(getattr(d, "explain_workers", 0)) or None
+    explained_running = 0
+    n_rejected_total = 0
+    # Explained, but every adverse driver was either undisclosable or had no
+    # Regulation B wording: a different gap from "not explained", and counted
+    # separately rather than looking like a blank.
+    no_disclosable = 0
+    step_seconds: dict[str, float] = {}
+
+    def timed(step: str, seconds: float) -> None:
+        step_seconds[step] = round(step_seconds.get(step, 0.0) + seconds, 2)
+
+    # A long explanation pass is no use if the machine sleeps halfway through it.
+    awake, awake_note = keep_awake(True)
+
     say("check", "running")
+    t_step = time.perf_counter()
     try:
         ctx = ctx or load_context(cfg, model_tag, model_name)
+        timed("load_model", time.perf_counter() - t_step)
+        t_step = time.perf_counter()
+        costs = load_costs(ctx.model_tag, ctx.cfg.paths.tables_dir)
         chunks = iter_chunks(data, filename, chunk_rows)
         first = next(chunks)
-        _, report = validate(first, ctx.spec)
-        if report.missing_core:
+        _, report = validate(first, ctx.spec, values=ctx.clean_values, costs=costs,
+                             mapping=mapping)
+        if report.required_missing:
             raise BatchError(
                 "Your file is missing required column(s): "
-                + ", ".join(report.missing_core) + ".",
-                f"core columns required: {list(CORE_REQUIRED)}",
-                "Add the column(s) to your CSV, or rename the existing ones to "
-                "these exact names, and upload again.")
+                + ", ".join(report.required_missing) + ".",
+                report.message(),
+                "Add the column(s), rename an existing one to match, or supply what "
+                "a derivation needs -- the Details list which inputs are missing for "
+                "each. Required features are those whose absence costs at least "
+                f"{0.010:.3f} concordance (FINDINGS 7d).")
     except BatchError as exc:
         fail("check", exc)
     explainer_name = choose_explainer(ctx, explainer)
+    workers = 1 if explainer_name == "treeshap" else workers
+    ledger = (None if explainer_name == "treeshap"
+              else Ledger.load(stamp_dir / "explained_rows.jsonl"))
+    timed("check_file", time.perf_counter() - t_step)
     say("check", "done",
         f"{len(report.present)} of {report.n_features} model features present, "
         f"read in blocks of {chunk_rows:,} rows")
@@ -793,7 +932,6 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     agg.group_column = "purpose" if "purpose" in ctx.spec.categorical else ""
     preview, preview_kept = [], 0
     notices = []
-    budget = max_explained
     row_offset = 0
     n_blocks = 0
     said_clean = said_score = said_explain = said_profile = False
@@ -805,11 +943,13 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     for block in blocks():
         n_blocks += 1
         block = block.reset_index(drop=True)
-        block, _ = validate(block, ctx.spec)
+        block, _ = validate(block, ctx.spec, values=ctx.clean_values,
+                            costs=costs, mapping=report.recognised or mapping)
 
         # -------------------------------------------------------- clean ----
         if not said_clean:
             say("clean", "running")
+        t_step = time.perf_counter()
         try:
             X, flags, block_report = prepare(block, ctx)
         except BatchError as exc:
@@ -819,6 +959,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                 "The file could not be prepared for the model.", repr(exc),
                 "Check that numeric columns contain numbers and that there are no "
                 "merged header rows."))
+        timed("clean", time.perf_counter() - t_step)
         clean_report = (block_report if clean_report is None
                         else clean_report.merge(block_report))
         if not said_clean:
@@ -836,6 +977,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         # -------------------------------------------------------- score ----
         if not said_score:
             say("score", "running")
+        t_step = time.perf_counter()
         try:
             surv = ctx.model.predict_survival(X, ctx.times)
         except Exception as exc:
@@ -843,6 +985,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                 "The model could not score these applicants.", repr(exc),
                 "The file's values may be far outside anything the model was "
                 "trained on. Check the Details, or try another model."))
+        timed("score", time.perf_counter() - t_step)
         pd12 = 1.0 - surv[:, k12]
         pd_h = 1.0 - surv[:, k_h]
         decision = np.where(pd_h >= threshold, "reject", "approve")
@@ -854,13 +997,16 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         # ------------------------------------------------------ explain ----
         if not said_explain:
             say("explain", "running")
+        t_step = time.perf_counter()
+        n_rejected_total += int((decision == "reject").sum())
         reject_pos = np.flatnonzero(decision == "reject")
-        explain_pos = reject_pos[:max(budget, 0)]
+        # Every rejected applicant is explained. A cap exists only as an explicit
+        # override for a quick look; at its default of 0 it does nothing.
+        explain_pos = reject_pos if budget is None else reject_pos[:max(budget, 0)]
         reasons, fair_flags, notice_file = {}, {}, {}
         explained_note = pd.Series("not applicable (approved)",
                                    index=range(len(block)))
-        explained_note.iloc[reject_pos] = (
-            f"{CAP_NOTE} (decision.max_explained={max_explained})")
+        explained_note.iloc[reject_pos] = CAP_NOTE
         if len(explain_pos):
             try:
                 if explainer_name == "treeshap":
@@ -868,10 +1014,24 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                         ctx.model, X.iloc[explain_pos],
                         horizon_months=float(d.horizon_months), times=ctx.times)
                 else:
-                    expl = explain_survshap(
+                    # Seeded per applicant from the applicant's own id, so a notice
+                    # does not depend on batch membership, worker count or whether
+                    # an earlier run was interrupted (FINDINGS 7.0b).
+                    expl = explain_rows_parallel(
                         ctx.model, X.iloc[explain_pos], ctx.background, ctx.times,
+                        row_ids=[str(ids[p]) for p in explain_pos],
                         nsamples=d.explain_nsamples,
-                        n_background=d.explain_n_background, seed=cfg.explain.seed)
+                        n_background=d.explain_n_background, seed=cfg.explain.seed,
+                        workers=(1 if len(explain_pos) < PARALLEL_MIN_ROWS
+                                 else workers),
+                        ledger=ledger,
+                        progress=lambda done, total: say(
+                            "explain", "running",
+                            f"{explained_running + done:,} of {n_rejected_total or total:,} "
+                            f"rejected applicants explained"))
+                if report.optional_missing or report.required_missing:
+                    expl = _without_features(
+                        expl, set(report.optional_missing) | set(report.required_missing))
                 for j, pos in enumerate(explain_pos):
                     notice = build_adverse_action_notice(
                         expl, obs=j, applicant_id=str(ids[pos]),
@@ -879,12 +1039,16 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                         model_name=f"{ctx.model_name} ({ctx.model_tag}), "
                                    f"{explainer_name}")
                     reasons[int(pos)] = notice.reasons
+                    if not notice.reasons:
+                        no_disclosable += 1
                     fair_flags[int(pos)] = ", ".join(notice.fair_lending_flags)
                     fname = f"notice_{_slug(str(ids[pos]))}.txt"
                     notices.append((fname, notice.render()))
                     notice_file[int(pos)] = fname
                     explained_note.iloc[pos] = "explained"
-                budget -= len(explain_pos)
+                explained_running += len(explain_pos)
+                if budget is not None:
+                    budget -= len(explain_pos)
             except Exception as exc:
                 fail("explain", BatchError(
                     "The applicants were scored, but the reasons could not be "
@@ -892,7 +1056,10 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                     "Try a smaller file, or lower decision.max_explained in "
                     "config/config.yaml."))
 
+        timed("explain", time.perf_counter() - t_step)
+
         # -------------------------------------------------------- write ----
+        t_step = time.perf_counter()
         front = pd.DataFrame({
             "row_id": np.arange(row_offset + 1, row_offset + len(block) + 1),
             "applicant_id": ids,
@@ -949,6 +1116,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
             preview.append(scored.head(PREVIEW_ROWS - preview_kept))
             preview_kept += min(len(scored), PREVIEW_ROWS - preview_kept)
 
+        timed("write_rows", time.perf_counter() - t_step)
         row_offset += len(block)
         said_score = said_explain = True
         del X, flags, scored, rejected, approved, block
@@ -957,12 +1125,13 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     cap_note = ""
     if agg.n_rejected_without_reasons:
         cap_note = (f"; {agg.n_rejected_without_reasons:,} rejected applicant(s) have "
-                    f"NO reasons (cap {max_explained})")
+                    f"NO reasons -- re-run to continue from there")
     say("explain", "done",
         f"{agg.n_rejected_explained:,} of {agg.n_rejected:,} rejected applicants "
         f"explained{cap_note}")
 
     # ----------------------------------------------------------- profile --
+    t_step = time.perf_counter()
     profile_frame = reservoir.frame()
     try:
         prof = profile(profile_frame, ctx)
@@ -978,7 +1147,10 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         + (f", on a random sample of {len(profile_frame):,} of {agg.n_rows:,} rows"
            if len(profile_frame) < agg.n_rows else ""))
 
+    timed("profile_and_drift", time.perf_counter() - t_step)
+
     # ----------------------------------------------------------- outputs --
+    t_step = time.perf_counter()
     say("files", "running")
     files = {"scored_applicants.csv": scored_path,
              "approved_applicants.csv": approved_path,
@@ -1037,6 +1209,7 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "max_explained": max_explained,
         "n_explained": agg.n_rejected_explained,
         "n_rejected_without_reasons": agg.n_rejected_without_reasons,
+        "n_explained_without_disclosable_reason": no_disclosable,
         "n_notices": len(notices),
         "features_expected": report.n_features,
         "features_present": len(report.present),
@@ -1044,6 +1217,11 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "feature_coverage": round(report.coverage, 4),
         "degraded_coverage": bool(report.coverage < d.min_feature_coverage),
         "mapped_columns": "; ".join(f"{k}->{v}" for k, v in report.mapped.items()),
+        "features_derived": "; ".join(f"{k} ({v})" for k, v in report.derived.items()),
+        "features_missing_optional": "; ".join(report.optional_missing),
+        "optional_missing_cost": (report.costs.describe(report.optional_missing)
+                                  if report.costs is not None else ""),
+        "schema_message": report.message(),
         "ignored_columns": "; ".join(report.ignored),
         "rows_out_of_range": agg.rows_out_of_range,
         "cleaning_policy_version": ctx.policy.version,
@@ -1054,6 +1232,11 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "drift_status": drift_result.status,
         "drift_features_moderate": drift_result.n_moderate,
         "drift_features_large": drift_result.n_large,
+        "explain_seeded": explainer_name == "survshap",
+        "explain_workers": (workers or suggest_workers(max(n_rejected_total, 1))
+                            if explainer_name == "survshap" else 1),
+        "sleep_blocked": bool(awake),
+        "seconds_by_step": step_seconds,
         "profiled_rows": len(profile_frame),
         "profile_sampling": "uniform random across the whole file",
         "chunk_rows": chunk_rows,
@@ -1061,6 +1244,12 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "seconds_total": round(elapsed, 1),
     }
     files["run_summary.csv"] = stamp_dir / "run_summary.csv"
+    # The per-step timings are finished first, so run_summary.csv, provenance.json
+    # and the returned result all carry the same numbers.
+    timed("write_outputs", time.perf_counter() - t_step)
+    step_seconds["total"] = round(time.perf_counter() - started, 2)
+    summary["seconds_by_step"] = dict(step_seconds)
+    summary["seconds_total"] = step_seconds["total"]
     pd.DataFrame([summary]).to_csv(files["run_summary.csv"], index=False)
     (stamp_dir / "validation_report.json").write_text(
         json.dumps(report.to_dict(), indent=2), encoding="utf-8")
@@ -1082,8 +1271,10 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         json.dumps({"provenance": stamp, "summary": summary,
                     "cleaning": clean_report.to_dict()}, indent=2),
         encoding="utf-8")
+    keep_awake(False)
     say("files", "done", f"{len(files)} files written to {stamp_dir.name}")
 
+    elapsed = step_seconds["total"]
     preview_frame = (pd.concat(preview, ignore_index=True) if preview
                      else pd.DataFrame())
     approved_preview = rejected_preview = preview_frame

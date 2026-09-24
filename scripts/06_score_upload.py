@@ -53,6 +53,9 @@ def main(argv: list[str] | None = None) -> int:
                     choices=["survshap", "treeshap", "auto"],
                     help="which explainer writes the reasons "
                          "(default: decision.bulk_explainer)")
+    ap.add_argument("--map", action="append", default=None, metavar="COLUMN=FEATURE",
+                    help="a confirmed column mapping, repeatable. Without any, the "
+                         "high-confidence proposals are used and reported.")
     ap.add_argument("--run-dir", default=None,
                     help="write the outputs here instead of a new timestamped "
                          "folder under outputs/runs (used by the dashboard)")
@@ -83,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
                            model_name=args.model, threshold=args.threshold,
                            max_explained=args.max_explained,
                            chunk_rows=args.chunk_rows, explainer=args.explainer,
+                           mapping=dict(pair.split("=", 1) for pair in args.map)
+                           if args.map else None,
                            run_dir=Path(args.run_dir) if args.run_dir else None,
                            progress=progress)
     except BatchError as exc:
@@ -102,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
           f"({s['drift_features_large']} large, {s['drift_features_moderate']} moderate).")
     print(f"Feature coverage: {s['features_present']} of {s['features_expected']}"
           + ("  DEGRADED" if s["degraded_coverage"] else ""))
+    if s.get("schema_message"):
+        print(s["schema_message"])
     print(f"Notices written: {s['n_notices']:,} of {s['n_rejected']:,} rejected "
           f"applicants, explained with {s['explainer']}.")
     if s.get("n_rejected_without_reasons"):

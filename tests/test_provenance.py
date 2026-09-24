@@ -135,7 +135,10 @@ def _config(tmp_path: Path) -> Path:
 SCRIPT_CASES = [
     ("01_build_labels.py", "data/accepted_labeled.parquet", []),
     ("02_train_models.py", "tables/02_metrics_dev.json", []),
-    ("02_train_models.py", "models/02_models_full.pkl", ["--full"]),
+    # A non-reserved tag: "full" may only be written by its registered
+    # settings (tests/test_reserved_tags.py).
+    ("02_train_models.py", "models/02_models_probe.pkl",
+     ["--full", "--tag", "probe"]),
     ("03_explain.py", "tables/03_explain_dev.json", []),
     ("03_explain.py", "tables/03_explain_full_strat.json", ["--tag", "full_strat"]),
     ("04_reject_inference.py", "tables/04_reject_inference_dev.json", []),

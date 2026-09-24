@@ -70,7 +70,10 @@ def cfg(tmp_path) -> Config:
                   decision=DecisionConfig(
         model_tag="stub", horizon_months=36, reject_at_or_above=0.45,
         explain_nsamples=2 * len(NUMERIC + CATEGORICAL), explain_n_background=8,
-        max_explained=3, background_rows=200))
+        max_explained=3, background_rows=200,
+        # One process: these tests exercise the flow, not the pool, and a
+        # pool per test starves the suite of memory.
+        explain_workers=1))
 
 
 @pytest.fixture
@@ -193,7 +196,7 @@ def test_notices_one_per_explained_rejected_applicant(runs, cfg, ctx):
     if len(rejected) > cfg.decision.max_explained:
         capped = rejected[rejected["explained"] != "explained"]
         assert capped["reason_1"].fillna("").eq("").all()
-        assert capped["explained"].str.contains("explanation cap reached").all()
+        assert capped["explained"].str.contains("run stopped before this row").all()
 
 
 def test_runs_never_overwrite_each_other(runs, cfg, ctx):
@@ -207,7 +210,10 @@ def test_aliases_mapped_and_extra_columns_ignored(runs, cfg, ctx):
     assert res.report.mapped == {"inquiries_last_6m": "inq_last_6mths",
                                  "loan_purpose": "purpose"}
     assert "credit_score" in res.report.ignored
-    assert "no trained model uses a bureau score" in res.report.ignored["credit_score"]
+    # Recognised, then reported as useless to this model -- more informative than
+    # filing it under "unknown column".
+    assert res.report.ignored["credit_score"] == res.report.unused["credit_score"]
+    assert "which this model does not use" in res.report.unused["credit_score"]
     assert res.report.id_column == "applicant_id"
     assert res.summary["ignored_columns"] == "credit_score"
 
@@ -449,22 +455,77 @@ def test_rejected_rows_are_explained_first_and_the_cap_is_marked(runs, cfg, ctx)
     assert len(explained) == min(len(rejected), cap) == res.summary["n_explained"]
     assert len(capped) == res.summary["n_rejected_without_reasons"]
     assert len(capped) > 0                                   # the cap really bit
-    assert capped["explained"].str.startswith(
-        "reasons not generated: explanation cap reached").all()
-    assert capped["explained"].str.contains("max_explained").all()
+    assert capped["explained"].str.startswith("reasons not generated").all()
     # The explained ones are the FIRST rejected rows in the file, not a sample.
     assert list(explained["row_id"]) == list(rejected["row_id"])[:cap]
     assert res.aggregates.n_rejected_without_reasons == len(capped)
 
 
-def test_cap_of_zero_leaves_every_rejected_row_marked(runs, cfg, ctx):
+def test_no_cap_means_every_rejected_applicant_is_explained(runs, cfg, ctx):
+    """The default is no cap (FINDINGS 7.0b): a declined applicant always gets
+    reasons, and the marker is reserved for a run that was stopped."""
     res = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs, max_explained=0)
     rejected = pd.read_csv(res.files["rejected_applicants.csv"])
     assert len(rejected) == res.summary["n_rejected"] > 0
-    assert res.summary["n_explained"] == 0
-    assert res.summary["n_rejected_without_reasons"] == len(rejected)
-    assert rejected["explained"].str.contains("explanation cap reached").all()
-    assert "adverse_action_notices.zip" not in res.files
+    assert res.summary["n_explained"] == len(rejected)
+    assert res.summary["n_rejected_without_reasons"] == 0
+    assert (rejected["explained"] == "explained").all()
+    # A notice can still end up with no disclosable reason -- every adverse driver
+    # undisclosable or without Regulation B wording. That is counted, not hidden.
+    blank = int(rejected["reason_1"].fillna("").eq("").sum())
+    assert blank == res.summary["n_explained_without_disclosable_reason"]
+    assert rejected["reason_1"].fillna("").ne("").sum() == len(rejected) - blank
+    assert "adverse_action_notices.zip" in res.files
+    assert res.summary["n_notices"] == len(rejected)
+
+
+def test_an_explicit_cap_still_marks_the_remainder(runs, cfg, ctx):
+    """A positive cap is an override for a quick look, and what it leaves out says
+    so rather than being blank."""
+    res = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs, max_explained=2)
+    rejected = pd.read_csv(res.files["rejected_applicants.csv"])
+    explained = rejected[rejected["explained"] == "explained"]
+    capped = rejected[rejected["explained"] != "explained"]
+    assert len(explained) == 2 == res.summary["n_explained"]
+    assert len(capped) == res.summary["n_rejected_without_reasons"] > 0
+    assert capped["explained"].str.contains("reasons not generated").all()
+
+
+def test_timings_are_recorded_per_step(runs, cfg, ctx):
+    res = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs)
+    steps = res.summary["seconds_by_step"]
+    for key in ("check_file", "clean", "score", "explain", "profile_and_drift",
+                "write_rows", "write_outputs", "total"):
+        assert key in steps, key
+    assert steps["total"] >= sum(v for k, v in steps.items() if k != "total") * 0.5
+    assert res.summary["explain_seeded"] is True
+    assert res.summary["explain_workers"] >= 1
+    # and the same numbers survive a round trip through the run's own files
+    loaded = batch.load_result(res.run_dir)
+    assert loaded.summary["seconds_by_step"] == steps
+
+
+def test_explanations_resume_instead_of_repeating(runs, cfg, ctx):
+    """The ledger: a second run over the same rows reuses what was explained."""
+    first = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs,
+                      max_explained=2)
+    ledger = first.run_dir / "explained_rows.jsonl"
+    assert ledger.exists() and len(ledger.read_text(encoding="utf-8").splitlines()) == 2
+
+    resumed_dir = first.run_dir.parent / "resumed"
+    resumed_dir.mkdir()
+    (resumed_dir / "explained_rows.jsonl").write_bytes(ledger.read_bytes())
+    second = run_batch(_upload(), "a.csv", cfg, ctx=ctx, run_dir=resumed_dir,
+                       max_explained=0)
+    rejected = pd.read_csv(second.files["rejected_applicants.csv"])
+    assert (rejected["explained"] == "explained").all()
+    # The two rows carried over from the ledger have the reasons they had before.
+    before = pd.read_csv(first.files["rejected_applicants.csv"])
+    carried = before[before["explained"] == "explained"]["applicant_id"].tolist()
+    for applicant in carried:
+        a = before.loc[before["applicant_id"] == applicant, "reason_1"].iloc[0]
+        b = rejected.loc[rejected["applicant_id"] == applicant, "reason_1"].iloc[0]
+        assert a == b
 
 
 def test_chunked_and_single_pass_agree_on_every_decision(runs, cfg, ctx):

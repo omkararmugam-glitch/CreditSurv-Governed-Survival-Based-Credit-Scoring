@@ -156,9 +156,13 @@ class DecisionConfig:
     explain_n_background: int = 100
     """Kept at the batch settings: a single applicant costs ~2.7s either way, and
     cheaper settings make the stated reasons unstable."""
-    max_explained: int = 100
-    """Cap on rejected applicants explained per run (~2.7s each). Rows beyond it
-    are marked as not explained rather than left silently blank."""
+    max_explained: int = 0
+    """0 = no cap: every rejected applicant is explained, which is what Regulation B
+    requires of a file of decisions. A positive value is an explicit override for a
+    quick look at a large file; rows beyond it are marked, never left blank."""
+    explain_workers: int = 0
+    """0 = choose from cores and free memory. Explanations are seeded per applicant,
+    so the worker count cannot change the reasons."""
     background_rows: int = 20_000
     """Training rows sampled before k-means summarising to explain_n_background."""
     bulk_explainer: str = "survshap"

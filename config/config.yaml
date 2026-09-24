@@ -88,7 +88,8 @@ decision:
   reject_at_or_above: 0.30
   explain_nsamples: 600      # ~2.7s per explained applicant
   explain_n_background: 100
-  max_explained: 100         # rejected applicants explained per run
+  max_explained: 0           # 0 = no cap: every rejected applicant is explained
+  explain_workers: 0         # 0 = pick from cores and free memory
   background_rows: 20000
   background_above_mb: 25     # uploads >= this run in a background process
   bulk_explainer: survshap    # survshap | treeshap | auto (see FINDINGS section 7)
