@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from creditsurv.batch import BatchError, run_batch  # noqa: E402
 from creditsurv.config import load_config  # noqa: E402
+from creditsurv.environment import (blocked_imports,  # noqa: E402
+                                    policy_block_message)
 
 STEP_LABELS = {"check": "Checking file", "clean": "Cleaning data",
                "profile": "Profiling data", "score": "Scoring applicants",
@@ -65,6 +67,13 @@ def main(argv: list[str] | None = None) -> int:
     if not src.exists():
         print(f"ERROR: {src} not found.", file=sys.stderr)
         return 2
+
+    blocked = blocked_imports()
+    if blocked:
+        print("ERROR: this machine cannot score applicants: Windows is blocking "
+              + ", ".join(c.name for c in blocked) + ".", file=sys.stderr)
+        print(policy_block_message(blocked), file=sys.stderr)
+        return 6
 
     cfg = load_config(args.config)
     started = time.perf_counter()

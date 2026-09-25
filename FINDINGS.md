@@ -46,6 +46,94 @@ Cox fit on synthetic data returned the expected coefficients and a c-index of
 | Higher-capacity model | LightGBM discrete-time hazard | `sksurv` RandomSurvivalForest |
 | Time-dependent attribution | SurvSHAP(t) implemented on `shap.KernelExplainer` | `survshap` package |
 
+### 0.1 The same policy later blocked two packages that had been working
+
+On 25 September 2026 the application stopped starting, with
+`OSError: [WinError 4551] An Application Control policy has blocked this file` raised
+from inside `pickle.load` -- because unpickling a model bundle imports lightgbm to
+rebuild its booster. `lightgbm` and `shap` no longer import at all. This is the
+constraint above reappearing, and section 0's parenthetical that "packages already
+installed are unaffected" is now **withdrawn**: it was true when written and is not a
+rule.
+
+What was established, by reading only:
+
+| question | answer |
+|---|---|
+| Did lightgbm change? | No. Version 4.7.0, installed by pip on **28 August 2026 20:16:24**; `lib_lightgbm.dll` created and last modified at that same instant, 3,888,128 bytes. |
+| Did any project command reinstall or upgrade it? | No. The only `pip install` anywhere in the repository is `README.md` line 47, for `lifelines` and `pyyaml`. The venv has no lightgbm of its own; `include-system-site-packages = true`. |
+| Smart App Control state | **Enforcing** (`VerifiedAndReputablePolicyState = 1`), with `SAC_PreviousState = 2` (evaluation) and `SAC_EnforcementReason = 1`. |
+| Is the blocked file signed? | No -- and neither is almost anything else here. |
+
+That last row is the finding. Signature status across this environment:
+
+| package | binaries | signed | unsigned | loads? |
+|---|---|---|---|---|
+| numpy | 19 | 0 | 19 | yes |
+| pandas | 44 | 0 | 44 | yes |
+| scipy | 114 | 0 | 114 | yes |
+| pyarrow | 30 | 0 | 30 | yes |
+| scikit-learn | 71 | 2 | 69 | yes |
+| **lightgbm** | 1 | 0 | 1 | **no** |
+| **shap** | 2 | 0 | 2 | **no** |
+
+**So Smart App Control is not deciding on signatures. It is deciding on reputation.**
+Microsoft's cloud service recognises numpy's and scipy's binaries -- downloaded
+millions of times -- and does not recognise these two. Neither file carries a
+mark-of-the-web, so that is not the difference either. Three consequences follow, and
+the first is the one worth remembering:
+
+* **Reinstalling cannot fix it.** The blocked file is byte-for-byte the file that was
+  working. "Restore the previously working wheel" is not available as a fix, because
+  this *is* the previously working wheel.
+* **The verdict is made off this machine, so it can change in either direction without
+  anything local changing.** It may start working again; that is not something to build
+  on.
+* **Nothing about it is specific to one library.** Any less-common compiled wheel in
+  this environment is one reputation verdict away from the same fate.
+
+**What this costs.** The gradient-boosted model cannot be loaded or scored, SurvSHAP(t)
+cannot run, so the upload page cannot score or explain anything; and the test suite
+cannot complete on this machine -- 467 of 562 tests still pass, with 43 failures and 63
+errors, every one of them tracing to this block rather than to the code. The last green
+run was 562 passed, earlier the same day, on the same commit.
+
+**What still works:** every result already on disk, the FINDINGS and Results pages, the
+run history, Cox and lifelines, drift and profiling, and 467 tests.
+
+**The way out, keeping Smart App Control on: WSL2.** Linux processes are outside Windows
+code-integrity policy, so both libraries load normally there. WSL is **not currently
+installed** on this machine (`wsl --status`: "The Windows Subsystem for Linux is not
+installed"), so this is a one-time `wsl --install`, a reboot, and rebuilding the
+environment inside the distribution. The trade-offs, stated rather than glossed:
+
+* The 174 MB labelled parquet and its siblings should be copied into the Linux
+  filesystem rather than read across `/mnt/c`, which is slow enough to matter for a
+  2.26-million-row read.
+* Every published result was produced on Windows. A refit under WSL would be a
+  different environment, so the provenance stamps would record different package
+  builds; results should be re-verified rather than assumed identical.
+* Two Windows-specific behaviours become inert: the `SetThreadExecutionState` sleep
+  block (section 7, D4) is a no-op on Linux, and process spawning becomes `fork`, which
+  removes the `__main__` re-import problem the parallel explainer had to work around.
+* Memory is shared with Windows by default; the 5.5 GB free that limited the explainer
+  to 4 workers becomes whatever `.wslconfig` allows.
+
+**What was deliberately not done.** Smart App Control was not disabled and no security
+policy was changed -- and disabling it is a one-way door: it cannot be re-enabled
+without reinstalling Windows. Self-signing the DLL would not help, because Smart App
+Control needs a signature its reputation service trusts, not merely a valid one. No
+attempt was made to strip file attributes or relocate the DLL to evade the check.
+
+**What was built instead:** `creditsurv.environment` turns the block into a sentence.
+The app shows it as a banner and still serves the pages that only read results; the
+upload path raises it as a `BatchError` when a bundle load actually fails, translating
+the exception rather than pre-empting it, so a model containing no native library is
+never refused for a library it does not use; and `06_score_upload.py` prints it to
+stderr and exits 6. The message names Smart App Control, says what is unavailable and
+what still works, says reinstalling cannot help and why, and offers WSL2 -- and it is
+ASCII-only, because it has to survive being written to a cp1252 console.
+
 **This is not purely a workaround.** A RandomSurvivalForest on 2.26M × ~40 is not
 feasible on a laptop, so that route would have meant subsampling heavily and
 describing it as a full-data result. The discrete-time hazard model handles the

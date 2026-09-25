@@ -62,6 +62,7 @@ from .cleaning import (CleaningPolicy, CleaningReport, CleaningValues, clean,
 # here -- imported so tests/test_cleaning_values_source.py can assert that scoring
 # does not fit cleaning values.
 from .config import Config
+from .environment import policy_block_message, policy_blocked_exception
 from .explain.adverse_action import MAX_PRINCIPAL_REASONS, build_adverse_action_notice
 from .explain.parallel import (Ledger, explain_rows_parallel, keep_awake,
                                suggest_workers)
@@ -517,7 +518,18 @@ def load_context(cfg: Config, model_tag: str | None = None,
     model_tag = model_tag or d.model_tag
     model_name = model_name or d.model
     try:
-        bundle, model_path = load_model_bundle(cfg.paths.models_dir, model_tag)
+        try:
+            bundle, model_path = load_model_bundle(cfg.paths.models_dir, model_tag)
+        except BaseException as exc:
+            # Unpickling a bundle imports lightgbm to rebuild its booster, so a
+            # blocked library surfaces here as an OSError from inside pickle.load.
+            if not policy_blocked_exception(exc):
+                raise
+            raise BatchError(
+                "This machine cannot score applicants: Windows is blocking the "
+                "libraries the model needs.",
+                f"{type(exc).__name__}: {exc}",
+                policy_block_message()) from exc
     except FileNotFoundError as exc:
         raise BatchError(
             f"No trained model found for '{model_tag}'.", str(exc),
@@ -1077,11 +1089,14 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                 if budget is not None:
                     budget -= len(explain_pos)
             except Exception as exc:
+                # The scores are in hand by now, so a blocked SHAP is a different
+                # failure from a file that is too large, and needs different advice.
+                fix = (policy_block_message() if policy_blocked_exception(exc)
+                       else "Try a smaller file, or lower decision.max_explained in "
+                            "config/config.yaml.")
                 fail("explain", BatchError(
                     "The applicants were scored, but the reasons could not be "
-                    "generated.", repr(exc),
-                    "Try a smaller file, or lower decision.max_explained in "
-                    "config/config.yaml."))
+                    "generated.", repr(exc), fix))
 
         timed("explain", time.perf_counter() - t_step)
 

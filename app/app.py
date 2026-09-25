@@ -27,6 +27,15 @@ import streamlit as st  # noqa: E402
 
 st.set_page_config(page_title="creditsurv", layout="wide")
 
+# Checked before any page loads a model, so a blocked native library produces a
+# sentence rather than an OSError from inside pickle.load. The pages that only read
+# results still work, so this warns and continues rather than stopping the app.
+from creditsurv.environment import blocked_imports, policy_block_message  # noqa: E402
+
+_blocked = blocked_imports()
+if _blocked:
+    st.error(policy_block_message(_blocked), icon=":material/gpp_bad:")
+
 VIEWS = ROOT / "app" / "views"
 # Everyday use on top; retraining and research below it, where they cannot be
 # reached by accident.
