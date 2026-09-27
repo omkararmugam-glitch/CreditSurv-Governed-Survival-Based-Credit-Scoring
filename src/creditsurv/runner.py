@@ -98,8 +98,14 @@ def launch(plan_stages: list[dict], *, lock_tag: str, meta: dict | None = None,
            detach: bool = True) -> Path:
     """Start a run in the background and return its run directory.
 
-    ``plan_stages`` is a list of ``{"key", "name", "tag", "args"}``. Raises
-    :class:`LockHeld` if a live run already holds ``lock_tag``.
+    ``plan_stages`` is a list of ``{"key", "name", "tag", "args"}``: each stage runs
+    ``python -u <args>`` from the project root. A stage may instead carry
+    ``"argv"``, a complete command run as given -- how a page served from Windows
+    runs a stage inside WSL (``wsl.exe ...``) while this runner, its lock and its
+    log stay on the Windows side where the page can watch them. ``meta`` with
+    ``"keep_awake": True`` asks Windows not to sleep while the run lasts.
+
+    Raises :class:`LockHeld` if a live run already holds ``lock_tag``.
     """
     held = active_lock(lock_tag, runs_dir)
     if held:
@@ -145,6 +151,28 @@ def launch(plan_stages: list[dict], *, lock_tag: str, meta: dict | None = None,
     return run_dir
 
 
+PROGRESS_ENV = {"CREDITSURV_SHOW_PROGRESS": "1",   # the SurvSHAP engine's bar on
+                "TQDM_MININTERVAL": "15",           # one update per 15 s in a log
+                "TQDM_NCOLS": "100"}
+# Not TQDM_ASCII: tqdm reads "1" as the bar's character set -- one symbol -- and
+# divides by zero drawing it, which would crash the run it reports on. It falls
+# back to ASCII by itself where the log cannot take Unicode.
+
+
+def progress_env(show: bool) -> dict:
+    """The environment a stage runs in. With ``show``, long computations print a
+    progress bar the pages can read (see :func:`creditsurv.evidence_jobs.parse_progress`),
+    and ``WSLENV`` carries those settings through ``wsl.exe`` into WSL, which does
+    not inherit Windows environment variables otherwise."""
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    if show:
+        env.update(PROGRESS_ENV)
+        passed = [v for v in env.get("WSLENV", "").split(":") if v]
+        passed += [f"{k}/u" for k in PROGRESS_ENV if f"{k}/u" not in passed]
+        env["WSLENV"] = ":".join(passed)
+    return env
+
+
 def execute(run_dir: Path, *, python: str | None = None) -> int:
     """Run every stage in order, stopping at the first failure. Returns the exit code."""
     run_dir = Path(run_dir)
@@ -156,6 +184,12 @@ def execute(run_dir: Path, *, python: str | None = None) -> int:
     code = 0
     status["state"] = "running"
     _write_json(run_dir / "status.json", status)
+    awake = bool((plan.get("meta") or {}).get("keep_awake"))
+    heartbeat = float((plan.get("meta") or {}).get("heartbeat_seconds", 300))
+    stage_env = progress_env(bool((plan.get("meta") or {}).get("show_progress")))
+    if awake:
+        from .explain.parallel import keep_awake
+        keep_awake(True)
     try:
         with open(run_dir / "log.txt", "a", encoding="utf-8", errors="replace") as log:
             def say(line: str) -> None:
@@ -170,14 +204,24 @@ def execute(run_dir: Path, *, python: str | None = None) -> int:
                 say("")
                 say("-" * 78)
                 say(f"{label}   (--tag {st['tag']})   started {datetime.now():%H:%M:%S}")
-                say(f"  > python {' '.join(st['args'])}")
+                cmd = list(st["argv"]) if st.get("argv") else [python, "-u", *st["args"]]
+                say(f"  > {' '.join(cmd) if st.get('argv') else 'python ' + ' '.join(st['args'])}")
                 say("-" * 78)
                 t0 = time.perf_counter()
-                proc = subprocess.run([python, "-u", *st["args"]], cwd=PROJECT_ROOT,
-                                      stdout=log, stderr=subprocess.STDOUT,
-                                      stdin=subprocess.DEVNULL,
-                                      env={**os.environ, "PYTHONUNBUFFERED": "1"})
-                code = proc.returncode
+                proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT,
+                                        stdout=log, stderr=subprocess.STDOUT,
+                                        stdin=subprocess.DEVNULL,
+                                        env=stage_env)
+                # A heartbeat in the log, whatever the stage prints: a stage that
+                # is silent for most of an hour (03d's SurvSHAP step) still shows
+                # it is alive and how long it has been going.
+                while True:
+                    try:
+                        code = proc.wait(timeout=heartbeat)
+                        break
+                    except subprocess.TimeoutExpired:
+                        say(f"  ... still running: {(time.perf_counter() - t0) / 60:.0f} "
+                            f"min elapsed ({datetime.now():%H:%M:%S})")
                 mins = (time.perf_counter() - t0) / 60
                 rec.update(ended=_now(), minutes=round(mins, 1), exit_code=code)
                 if code != 0:
@@ -205,6 +249,9 @@ def execute(run_dir: Path, *, python: str | None = None) -> int:
         status.update(state="failed", failed_stage=f"runner error: {exc!r}")
         code = code or 1
     finally:
+        if awake:
+            from .explain.parallel import keep_awake
+            keep_awake(False)
         status["finished"] = _now()
         _write_json(run_dir / "status.json", status)
         lock = _lock_path(runs_dir, plan["lock_tag"])

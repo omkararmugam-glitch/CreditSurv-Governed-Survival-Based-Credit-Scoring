@@ -40,14 +40,36 @@ Where a consumer report was used, FCRA 615(a) additionally requires the score,
 its range, and the key factors that adversely affected it. That block is included
 when a score is supplied.
 
+Two outputs, never one
+----------------------
+:func:`build_adverse_action_notice` produces two documents with two audiences:
+
+* the **applicant notice** (:class:`ApplicantNotice`) -- only what the applicant is
+  legally given: the action, the stated reasons in Regulation B wording, the FCRA
+  score block, the ECOA notice and the enforcement agency. No feature names, no
+  attributions, no model details, no fair-lending flags;
+* the **internal review record** (:class:`InternalReviewRecord`) -- everything
+  else: fair-lending flags, the non-disclosable drivers and their attributions,
+  the feature behind each stated reason, the model and the predicted risk.
+
+Test 1 (``test_1_baseline_1k.csv``) found 166 of 255 applicant notices carrying
+the internal fair-lending flag, because both used to be rendered into one text.
+:meth:`ApplicantNotice.render` now screens its own output with
+:func:`find_internal_content` and raises :class:`NoticeContentError` rather than
+return a notice that carries internal text, so no caller can repeat it.
+
 This module produces a realistic, correctly-structured notice for a portfolio
 project. It is not legal advice and has not been reviewed by counsel.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from datetime import date
+from functools import lru_cache
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -60,11 +82,19 @@ __all__ = [
     "REASON_TEMPLATES",
     "PrincipalReason",
     "AdverseActionNotice",
+    "ApplicantNotice",
+    "InternalReviewRecord",
     "assert_disclosable",
     "build_adverse_action_notice",
+    "find_internal_content",
+    "assert_applicant_safe",
+    "write_notice_pair",
     "NonDisclosableFeatureError",
+    "NoticeContentError",
     "SCORE_FEATURES",
     "NOT_DISCLOSABLE",
+    "NOT_FOR_LENDING",
+    "INTERNAL_HEADER",
 ]
 
 
@@ -261,6 +291,91 @@ something to quietly drop.
 """
 
 
+class NoticeContentError(RuntimeError):
+    """An applicant notice would have carried internal content.
+
+    Raised by :meth:`ApplicantNotice.render` itself, so a notice that fails the
+    screen is never returned to a caller, let alone written or sent.
+    """
+
+
+NOT_FOR_LENDING = "SPECIMEN -- NOT FOR LENDING DECISIONS -- DO NOT SEND"
+"""Printed at the top of an applicant notice produced by a model that is not
+approved in the registry, or by a research stage. It says what the document is
+not; it discloses nothing about the model."""
+
+INTERNAL_HEADER = ("INTERNAL REVIEW RECORD -- NOT PART OF THE APPLICANT NOTICE -- "
+                   "NEVER SEND TO THE APPLICANT")
+
+# Words and phrases that belong to the internal record and never to an applicant
+# notice. Matched case-insensitively on word boundaries against the rendered text.
+INTERNAL_MARKERS: tuple[str, ...] = (
+    "internal", "review flag", "fair-lending", "fair lending", "non-disclosable",
+    "not disclosable", "undisclosable", "attribution", "shap", "survshap",
+    "treeshap", "model", "predicted", "probability", "hazard", "cox", "feature",
+    "driver", "drivers", "geography", "geographic", "zip code", "state of residence",
+    "redlining", "deployment",
+)
+_NUMBER_WITH_DECIMALS = re.compile(r"-?\d+\.\d{3,}")    # an attribution or a probability
+_PERCENTAGE = re.compile(r"\d+(\.\d+)?\s?%")             # a probability as a percentage
+
+
+@lru_cache(maxsize=1)
+def _fixed_notice_words() -> frozenset[str]:
+    """Every word the applicant notice may legitimately contain from its own
+    wording: the templates plus the fixed text. A feature name that is also an
+    ordinary word here ("purpose") is not evidence of a leak; one that is not
+    ("installment", "dti", "addr_state") is."""
+    text = " ".join(t["reason"] + " " + t["detail"] for t in REASON_TEMPLATES.values())
+    text += " " + ECOA_NOTICE
+    return frozenset(w.lower() for w in re.findall(r"[A-Za-z]+", text))
+
+
+def find_internal_content(text: str, *, feature_names=(),
+                          applicant_id: str | None = None) -> list[str]:
+    """What in ``text`` does not belong in an applicant notice. Empty means clean.
+
+    Three kinds of problem are looked for: internal wording (fair-lending flags,
+    attributions, model details), a model feature name -- always including the
+    non-disclosable and score features -- and numbers formatted the way an
+    attribution or a probability is. The applicant's own id is removed first, since
+    it comes from the uploaded file and is the applicant's, not the model's.
+    """
+    body = text.replace(applicant_id, " ") if applicant_id else text
+    problems: list[str] = []
+    for marker in INTERNAL_MARKERS:
+        if re.search(rf"(?<![A-Za-z]){re.escape(marker)}(?![A-Za-z])", body, re.I):
+            problems.append(f"internal wording {marker!r}")
+    ordinary = _fixed_notice_words()
+    names = set(map(str, feature_names)) | set(NOT_DISCLOSABLE) | set(SCORE_FEATURES)
+    for name in sorted(names):
+        if "_" not in name and name.lower() in ordinary:
+            continue
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", body):
+            kind = ("non-disclosable feature" if name in NOT_DISCLOSABLE
+                    else "score feature" if name in SCORE_FEATURES
+                    else "feature name")
+            problems.append(f"{kind} {name!r}")
+    if _NUMBER_WITH_DECIMALS.search(body):
+        problems.append("a number with 3+ decimals (an attribution or probability)")
+    if _PERCENTAGE.search(body):
+        problems.append("a percentage (a probability)")
+    return problems
+
+
+def assert_applicant_safe(text: str, *, feature_names=(),
+                          applicant_id: str | None = None) -> str:
+    """Return ``text`` unchanged, or raise :class:`NoticeContentError`."""
+    problems = find_internal_content(text, feature_names=feature_names,
+                                     applicant_id=applicant_id)
+    if problems:
+        raise NoticeContentError(
+            f"applicant notice for {applicant_id or '(unknown)'} carries internal "
+            f"content: {'; '.join(problems)}. Internal material belongs in the "
+            f"internal review record, never in the applicant notice.")
+    return text
+
+
 def assert_disclosable(features: object) -> None:
     """Reject a feature set built on Lending Club's own score.
 
@@ -294,13 +409,30 @@ class PrincipalReason:
         return f"{self.rank}. {self.reason}\n   {self.detail}"
 
 
-@dataclass
-class AdverseActionNotice:
-    """A structured, renderable adverse-action notice."""
+ECOA_NOTICE = (
+    "The federal Equal Credit Opportunity Act prohibits creditors from "
+    "discriminating against credit applicants on the basis of race, color, "
+    "religion, national origin, sex, marital status, age (provided the "
+    "applicant has the capacity to enter into a binding contract); because "
+    "all or part of the applicant's income derives from any public "
+    "assistance program; or because the applicant has in good faith "
+    "exercised any right under the Consumer Credit Protection Act."
+)
+
+
+@dataclass(frozen=True)
+class ApplicantNotice:
+    """What the applicant is legally given, and nothing else.
+
+    The stated reasons are carried as Regulation B wording only: the feature a
+    reason came from, its attribution and the applicant's value stay in the
+    :class:`InternalReviewRecord`. ``screen_features`` is the model's feature list,
+    used by :meth:`render` to screen its own output; it is never printed.
+    """
 
     applicant_id: str
     decision: str
-    reasons: list[PrincipalReason]
+    reasons: tuple[tuple[str, str], ...]          # (reason, detail), in rank order
     creditor_name: str
     creditor_address: str
     enforcement_agency: str
@@ -308,29 +440,21 @@ class AdverseActionNotice:
     credit_score: float | None = None
     score_range: tuple[float, float] | None = None
     score_source: str | None = None
-    predicted_default_probability: float | None = None
-    horizon_months: int | None = None
-    model_name: str = "survival"
-    excluded_helpful_features: tuple[str, ...] = field(default=())
-    fair_lending_flags: tuple[str, ...] = field(default=())
-    """Non-disclosable features that were nonetheless among the top adverse
-    drivers. A non-empty value means the model's real principal reason cannot
-    lawfully be stated, which warrants review before deployment."""
-
-    ECOA_NOTICE = (
-        "The federal Equal Credit Opportunity Act prohibits creditors from "
-        "discriminating against credit applicants on the basis of race, color, "
-        "religion, national origin, sex, marital status, age (provided the "
-        "applicant has the capacity to enter into a binding contract); because "
-        "all or part of the applicant's income derives from any public "
-        "assistance program; or because the applicant has in good faith "
-        "exercised any right under the Consumer Credit Protection Act."
-    )
+    specimen: str | None = None
+    screen_features: tuple[str, ...] = ()
 
     def render(self) -> str:
-        """The notice as plain text, in the order Regulation B requires."""
+        """The notice as plain text, in the order Regulation B requires.
+
+        Screened before it is returned: a notice carrying internal content raises
+        :class:`NoticeContentError` instead.
+        """
         w = 74
         out: list[str] = []
+        if self.specimen:
+            out.append("*" * w)
+            out.append(self.specimen.center(w))
+            out.append("*" * w)
         out.append("=" * w)
         out.append("STATEMENT OF ADVERSE ACTION".center(w))
         out.append("=" * w)
@@ -361,20 +485,12 @@ class AdverseActionNotice:
         else:
             out.append("The principal reason(s) for this decision were:")
             out.append("")
-            for r in self.reasons:
-                out.append(r.render())
+            for rank, (reason, detail) in enumerate(self.reasons, start=1):
+                out.append(f"{rank}. {reason}\n   {detail}")
                 out.append("")
         out.append("If you have questions about these reasons, you may contact us at")
         out.append("the address above.")
         out.append("")
-        if self.fair_lending_flags:
-            out.append("[INTERNAL REVIEW FLAG -- NOT PART OF THE APPLICANT NOTICE]")
-            out.append("Non-disclosable features were among the strongest adverse")
-            out.append(f"drivers for this applicant: {', '.join(self.fair_lending_flags)}.")
-            out.append("These were excluded from the stated reasons. A model whose")
-            out.append("principal driver cannot lawfully be disclosed requires")
-            out.append("fair-lending review before deployment.")
-            out.append("")
 
         # FCRA 615(a) score disclosure
         if self.credit_score is not None:
@@ -401,7 +517,7 @@ class AdverseActionNotice:
         out.append("-" * w)
         out.append("YOUR RIGHTS UNDER FEDERAL LAW")
         out.append("-" * w)
-        for line in _wrap(self.ECOA_NOTICE, w):
+        for line in _wrap(ECOA_NOTICE, w):
             out.append(line)
         out.append("")
         # (4) enforcement agency
@@ -411,7 +527,40 @@ class AdverseActionNotice:
             out.append(f"  {line}")
         out.append("")
         out.append("=" * w)
-        return "\n".join(out)
+        return assert_applicant_safe("\n".join(out), feature_names=self.screen_features,
+                                     applicant_id=self.applicant_id)
+
+
+@dataclass(frozen=True)
+class InternalReviewRecord:
+    """Everything about a decision that the applicant is not given.
+
+    Written to the run's ``internal/`` folder and to ``internal_review_flags.csv``,
+    never into ``adverse_action_notices.zip``.
+    """
+
+    applicant_id: str
+    decision: str
+    notice_date: date
+    model_name: str
+    predicted_default_probability: float | None
+    horizon_months: int | None
+    reasons: tuple[PrincipalReason, ...]
+    top_adverse_drivers: tuple[tuple[str, float], ...]
+    """The strongest adverse attributions *before* any filtering, so a
+    non-disclosable driver is visible here with its rank and size."""
+    excluded_helpful_features: tuple[str, ...] = ()
+    fair_lending_flags: tuple[str, ...] = ()
+    notice_status: str = "notice issued"
+
+    @property
+    def flagged(self) -> bool:
+        return bool(self.fair_lending_flags)
+
+    @property
+    def top_driver_not_disclosable(self) -> bool:
+        return bool(self.top_adverse_drivers) and \
+            self.top_adverse_drivers[0][0] in NOT_DISCLOSABLE
 
     def to_dict(self) -> dict:
         return {
@@ -421,6 +570,7 @@ class AdverseActionNotice:
             "model": self.model_name,
             "predicted_default_probability": self.predicted_default_probability,
             "horizon_months": self.horizon_months,
+            "notice_status": self.notice_status,
             "n_reasons": len(self.reasons),
             "reasons": [
                 {
@@ -433,9 +583,164 @@ class AdverseActionNotice:
                 }
                 for r in self.reasons
             ],
+            "top_adverse_drivers": [
+                {"rank": i + 1, "feature": f, "attribution": round(float(a), 6),
+                 "disclosable": f not in NOT_DISCLOSABLE}
+                for i, (f, a) in enumerate(self.top_adverse_drivers)],
             "excluded_helpful_features": list(self.excluded_helpful_features),
             "fair_lending_flags": list(self.fair_lending_flags),
+            "top_driver_not_disclosable": self.top_driver_not_disclosable,
         }
+
+    def to_row(self) -> dict:
+        """One flat row for ``internal_review_flags.csv``."""
+        row = {
+            "applicant_id": self.applicant_id,
+            "notice_status": self.notice_status,
+            "fair_lending_flag": bool(self.flagged),
+            "non_disclosable_drivers": ", ".join(self.fair_lending_flags),
+            "top_driver_not_disclosable": self.top_driver_not_disclosable,
+            "top_driver": self.top_adverse_drivers[0][0] if self.top_adverse_drivers else "",
+            "top_driver_attribution": (round(float(self.top_adverse_drivers[0][1]), 6)
+                                       if self.top_adverse_drivers else ""),
+            "predicted_default_probability": (
+                None if self.predicted_default_probability is None
+                else round(self.predicted_default_probability, 4)),
+            "horizon_months": self.horizon_months,
+            "model": self.model_name,
+        }
+        for i in range(MAX_PRINCIPAL_REASONS):
+            r = self.reasons[i] if i < len(self.reasons) else None
+            row[f"reason_{i + 1}_feature"] = r.feature if r else ""
+            row[f"reason_{i + 1}_attribution"] = round(float(r.attribution), 6) if r else ""
+        row["direction_consistent"] = all(r.direction_consistent for r in self.reasons)
+        return row
+
+    def render(self) -> str:
+        lines = [INTERNAL_HEADER, "", f"Applicant ID:  {self.applicant_id}",
+                 f"Decision:      {self.decision}",
+                 f"Status:        {self.notice_status}",
+                 f"Model:         {self.model_name}"]
+        if self.predicted_default_probability is not None:
+            lines.append(f"Predicted {self.horizon_months}-month default probability: "
+                         f"{self.predicted_default_probability:.4f}")
+        lines.append("")
+        if self.fair_lending_flags:
+            lines += ["FAIR-LENDING REVIEW FLAG",
+                      "Non-disclosable features were among the strongest adverse "
+                      f"drivers: {', '.join(self.fair_lending_flags)}. They were "
+                      "excluded from the stated reasons. A model whose principal "
+                      "driver cannot lawfully be disclosed requires fair-lending "
+                      "review before deployment.", ""]
+        lines.append("Strongest adverse drivers (before filtering):")
+        for i, (f, a) in enumerate(self.top_adverse_drivers, start=1):
+            tag = "" if f not in NOT_DISCLOSABLE else "   <- NOT DISCLOSABLE"
+            lines.append(f"  {i}. {f:<32} {a:+.6f}{tag}")
+        lines += ["", "Stated reasons and the features behind them:"]
+        for r in self.reasons:
+            lines.append(f"  {r.rank}. {r.reason}  [{r.feature} = "
+                         f"{_plain(r.feature_value)}, {r.attribution:+.6f}"
+                         + ("" if r.direction_consistent else ", direction inconsistent")
+                         + "]")
+        if self.excluded_helpful_features:
+            lines += ["", "Helped the applicant (never a reason): "
+                      + ", ".join(self.excluded_helpful_features)]
+        return "\n".join(lines) + "\n"
+
+
+@dataclass
+class AdverseActionNotice:
+    """The result of explaining one declined applicant: two documents in one.
+
+    :meth:`applicant_notice` is what the applicant receives; :meth:`internal_record`
+    is everything else. :meth:`render` renders the *applicant* notice only, and
+    :meth:`to_dict` is the internal record -- so the two can never be confused by
+    a caller reaching for the obvious method.
+    """
+
+    applicant_id: str
+    decision: str
+    reasons: list[PrincipalReason]
+    creditor_name: str
+    creditor_address: str
+    enforcement_agency: str
+    notice_date: date
+    credit_score: float | None = None
+    score_range: tuple[float, float] | None = None
+    score_source: str | None = None
+    predicted_default_probability: float | None = None
+    horizon_months: int | None = None
+    model_name: str = "survival"
+    excluded_helpful_features: tuple[str, ...] = field(default=())
+    fair_lending_flags: tuple[str, ...] = field(default=())
+    """Non-disclosable features that were nonetheless among the top adverse
+    drivers. A non-empty value means the model's real principal reason cannot
+    lawfully be stated, which warrants review before deployment."""
+    top_adverse_drivers: tuple[tuple[str, float], ...] = field(default=())
+    feature_names: tuple[str, ...] = field(default=())
+    specimen: str | None = None
+
+    ECOA_NOTICE = ECOA_NOTICE
+
+    def applicant_notice(self) -> ApplicantNotice:
+        return ApplicantNotice(
+            applicant_id=self.applicant_id, decision=self.decision,
+            reasons=tuple((r.reason, r.detail) for r in self.reasons),
+            creditor_name=self.creditor_name, creditor_address=self.creditor_address,
+            enforcement_agency=self.enforcement_agency, notice_date=self.notice_date,
+            credit_score=self.credit_score, score_range=self.score_range,
+            score_source=self.score_source, specimen=self.specimen,
+            screen_features=tuple(self.feature_names))
+
+    def internal_record(self, notice_status: str | None = None) -> InternalReviewRecord:
+        return InternalReviewRecord(
+            applicant_id=self.applicant_id, decision=self.decision,
+            notice_date=self.notice_date, model_name=self.model_name,
+            predicted_default_probability=self.predicted_default_probability,
+            horizon_months=self.horizon_months, reasons=tuple(self.reasons),
+            top_adverse_drivers=tuple(self.top_adverse_drivers),
+            excluded_helpful_features=tuple(self.excluded_helpful_features),
+            fair_lending_flags=tuple(self.fair_lending_flags),
+            notice_status=notice_status or ("notice issued" if self.reasons else
+                                            "pending manual review: no disclosable "
+                                            "adverse reason"))
+
+    def render(self) -> str:
+        """The applicant notice. Internal content is in :meth:`render_internal`."""
+        return self.applicant_notice().render()
+
+    def render_internal(self) -> str:
+        return self.internal_record().render()
+
+    def to_dict(self) -> dict:
+        """The internal record, as JSON-ready data. Never for the applicant."""
+        return self.internal_record().to_dict()
+
+
+def write_notice_pair(notice: AdverseActionNotice, applicant_path: Path,
+                      internal_dir: Path) -> tuple[Path, Path, Path]:
+    """Write one notice's two documents to two places.
+
+    The applicant notice goes to ``applicant_path``; the internal record, as text
+    and as JSON, goes under ``internal_dir`` -- a separate folder, so the files an
+    applicant could be sent and the files they must never see do not share one.
+    Used by Stage 3; scoring runs write the same two outputs in bulk.
+    """
+    applicant_path = Path(applicant_path)
+    internal_dir = Path(internal_dir)
+    if applicant_path.resolve().parent == internal_dir.resolve():
+        raise ValueError("the applicant notice and the internal record must not "
+                         "share a folder")
+    text = notice.render()                        # screened, or raises
+    applicant_path.parent.mkdir(parents=True, exist_ok=True)
+    internal_dir.mkdir(parents=True, exist_ok=True)
+    applicant_path.write_text(text, encoding="utf-8")
+    stem = applicant_path.stem
+    internal_txt = internal_dir / f"{stem}_internal_review.txt"
+    internal_json = internal_dir / f"{stem}_internal_review.json"
+    internal_txt.write_text(notice.render_internal(), encoding="utf-8")
+    internal_json.write_text(json.dumps(notice.to_dict(), indent=2), encoding="utf-8")
+    return applicant_path, internal_txt, internal_json
 
 
 def _plain(value):
@@ -481,6 +786,7 @@ def build_adverse_action_notice(
     score_source: str | None = "Credit bureau risk score",
     max_reasons: int = MAX_PRINCIPAL_REASONS,
     model_name: str = "survival",
+    specimen: str | None = None,
 ) -> AdverseActionNotice:
     """Build a notice from one observation's SurvSHAP(t) attributions.
 
@@ -573,4 +879,8 @@ def build_adverse_action_notice(
         model_name=model_name,
         excluded_helpful_features=helpful,
         fair_lending_flags=fair_lending_flags,
+        top_adverse_drivers=tuple((str(f), float(adverse[f]))
+                                  for f in top_adverse),
+        feature_names=tuple(map(str, expl.feature_names)),
+        specimen=specimen,
     )

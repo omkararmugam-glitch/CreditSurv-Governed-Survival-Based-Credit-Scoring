@@ -15,12 +15,14 @@ security setting, or suggest doing either.
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from dataclasses import dataclass
 
-__all__ = ["NATIVE_REQUIREMENTS", "ImportCheck", "check_native_imports",
-           "blocked_imports", "policy_block_message", "smart_app_control_state",
-           "policy_blocked_exception"]
+__all__ = ["NATIVE_REQUIREMENTS", "RUNTIME_REQUIREMENTS", "ImportCheck",
+           "check_native_imports", "blocked_imports", "policy_block_message",
+           "smart_app_control_state", "policy_blocked_exception", "runtime_label",
+           "fix_for", "runtime_report"]
 
 NATIVE_REQUIREMENTS: tuple[tuple[str, str], ...] = (
     ("lightgbm", "the gradient-boosted hazard model that scores applicants, and any "
@@ -28,6 +30,16 @@ NATIVE_REQUIREMENTS: tuple[tuple[str, str], ...] = (
     ("shap", "SurvSHAP(t), which produces the reasons on an adverse-action notice"),
 )
 """Native packages the scoring path needs, and what is lost without each."""
+
+RUNTIME_REQUIREMENTS: tuple[tuple[str, str], ...] = (
+    ("lifelines", "the Cox model, and any model bundle that contains one"),
+    *NATIVE_REQUIREMENTS,
+    ("streamlit", "the app itself"),
+    ("psutil", "telling a live background run from an interrupted one"),
+)
+"""Everything the app and the pipeline import beyond the scientific stack. Checked by
+``run_linux.ps1`` before it starts the app in WSL, so a gap is named up front rather
+than surfacing later as a traceback on one page."""
 
 _POLICY_MARKERS = ("application control policy", "winerror 4551",
                    "blocked by policy", "code integrity")
@@ -133,9 +145,11 @@ def policy_block_message(checks=None) -> str:
         "run history, and every table and figure produced before now.",
         "",
         "Ways forward, none of which involve weakening Windows security:",
-        "- Run the project under **WSL2** (`wsl --install`, then recreate the "
-        "environment inside Linux). Linux processes are outside Windows code "
-        "integrity policy, so both libraries load normally.",
+        "- Run the project under **WSL2**: from the project folder in PowerShell, "
+        "`powershell -ExecutionPolicy Bypass -File .\\run_linux.ps1`. It syncs the "
+        "code to `~/creditsurv` and serves this app from Linux, which is outside "
+        "Windows code integrity policy, so both libraries load normally. The README "
+        "section *Running the UI* has the one-time setup.",
         "- Run it on a machine where Smart App Control is off by default, for "
         "example a work laptop or a cloud VM.",
         "",
@@ -160,3 +174,71 @@ def policy_blocked_exception(exc: BaseException) -> bool:
             return True
         exc = exc.__cause__ or exc.__context__
     return False
+
+
+def runtime_label() -> str:
+    """Where this process is running, in the words shown in the app header.
+
+    Exists because the same app can be served from Windows (where Smart App Control
+    blocks scoring) or from WSL (where it works), both on port 8501, and the page
+    otherwise looks identical.
+    """
+    if sys.platform == "win32":
+        return "Windows"
+    if sys.platform.startswith("linux"):
+        if os.environ.get("WSL_DISTRO_NAME"):
+            return "Linux (WSL)"
+        try:
+            with open("/proc/sys/kernel/osrelease", encoding="utf-8") as fh:
+                if "microsoft" in fh.read().lower():
+                    return "Linux (WSL)"
+        except OSError:
+            pass
+        return "Linux"
+    if sys.platform == "darwin":
+        return "macOS"
+    return sys.platform
+
+
+def fix_for(check: ImportCheck) -> str:
+    """The command that fixes one failed import, or the reason no command will."""
+    low = check.error.lower()
+    if check.blocked_by_policy:
+        return ("blocked by Windows Smart App Control; installing cannot fix it. "
+                "Run the app under WSL with run_linux.ps1.")
+    if "libgomp" in low:
+        return "sudo apt install libgomp1   (the OpenMP runtime lightgbm links against)"
+    if sys.platform == "win32":
+        pip, reqs = r".venv\Scripts\python.exe -m pip", '-e ".[ui,dev]"'
+    else:
+        pip, reqs = ".venv/bin/python -m pip", "-r requirements-linux.txt"
+    if "no module named" in low:
+        return f"{pip} install {reqs}   (from the project folder)"
+    return (f"{pip} install --force-reinstall {check.name}   "
+            f"(it is installed but failed to load; the error above says why)")
+
+
+def runtime_report(requirements=RUNTIME_REQUIREMENTS) -> tuple[bool, str]:
+    """Whether everything imports, and a report that names each failure and its fix."""
+    checks = check_native_imports(requirements)
+    failed = [c for c in checks if not c.ok]
+    lines = [f"Runtime: {runtime_label()}, Python {sys.version.split()[0]} "
+             f"({sys.executable})"]
+    for c in checks:
+        if c.ok:
+            mod = sys.modules.get(c.name)
+            lines.append(f"  ok       {c.name} {getattr(mod, '__version__', '')}".rstrip())
+    for c in failed:
+        lines += [f"  MISSING  {c.name} -- needed for {c.needed_for}",
+                  f"           error: {c.error}",
+                  f"           fix:   {fix_for(c)}"]
+    if failed:
+        lines.append(f"{len(failed)} of {len(checks)} packages cannot be imported; "
+                     f"the app was not started.")
+    return not failed, "\n".join(lines)
+
+
+if __name__ == "__main__":
+    ok, report = runtime_report()
+    print(report)
+    raise SystemExit(0 if ok else 1)

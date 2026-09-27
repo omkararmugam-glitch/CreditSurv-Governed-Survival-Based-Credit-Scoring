@@ -6,6 +6,13 @@ something to discover by uploading; ``tests/test_app.py`` renders every panel an
 every chart here against a real run directory.
 
 Read-only: everything shown comes from what the run wrote.
+
+Drawn in the order it becomes useful: :func:`render_headline` (stamps, checks,
+counts, approval rate and the first rows of decisions) needs only the run's summary
+and its first rows, so it appears the moment Phase 1 finishes; the Phase 2 panel
+goes between; :func:`render_details` (charts, profile, drift, downloads) follows.
+Downloads read nothing until clicked -- a run of a 450 MB file has over a gigabyte
+of outputs, and reading or zipping them on every rerun is what made the page slow.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ import streamlit as st
 
 from _common import ACCENT, APPROVE, MUTED, REJECT, rel
 from creditsurv.batch import CAP_NOTE, bundle_zip
+from creditsurv.run_checks import REASONS_PENDING
 
 DRIFT_BOX = {"stable": st.success, "moderate": st.warning, "large": st.error,
              "unknown": st.warning, "insufficient": st.info}
@@ -41,16 +49,52 @@ def _bar_with_counts(data: pd.DataFrame, *, y: str, x: str, colour, title=None,
     return bars + labels
 
 
-def render(result, cfg=None) -> None:
-    """Draw the whole result view for a finished run."""
+def render(result, cfg=None, *, middle=None) -> None:
+    """Draw the whole result view: the headline first, then ``middle`` (the
+    Phase 2 panel, on the upload page), then the details."""
+    render_headline(result)
+    if middle is not None:
+        middle()
+    render_details(result)
+
+
+def render_headline(result) -> None:
+    """What is known the moment Phase 1 finishes: nothing here waits for reasons,
+    charts, the profile or any file to be read in full."""
     s = result.summary
     scored = result.scored
-    agg = result.aggregates
 
+    # Said first and loudest: a run that may not be used to decide anything.
+    if s.get("for_lending_decisions") is False:
+        st.error(f"**NOT FOR LENDING DECISIONS.** "
+                 f"{s.get('not_for_lending_reasons', '')}. Every output file and every "
+                 f"notice of this run carries the same stamp.",
+                 icon=":material/block:")
+
+    p1 = float(s.get("phase1_seconds") or result.seconds or 0.0)
     st.success(
-        f"Done in {result.seconds:.1f}s "
-        f"({result.seconds / max(s['n_rows'], 1) * 1000:.0f}s per 1,000 applicants). "
+        f"Decisions ready in {p1:.1f}s "
+        f"({p1 / max(s['n_rows'], 1) * 1000:.2f}s per 1,000 applicants). "
         f"Files saved to `{rel(result.run_dir)}`.")
+    pending_n = int(s.get("n_reasons_pending", 0) or 0)
+    if pending_n:
+        st.info(f"**Reasons pending for {pending_n:,} of {s['n_rejected']:,} rejected "
+                f"applicants.** Their rows say \"{REASONS_PENDING}\" until Phase 2 "
+                f"reaches them; decisions are final either way.")
+
+    checks = getattr(result, "checks", None)
+    if checks is not None and not checks.empty:
+        n_fail = int((checks["status"] == "FAIL").sum())
+        n_over = int((checks["status"] == "OVERRIDDEN").sum())
+        line = (f"**Run checks: {int((checks['status'] == 'PASS').sum())} of "
+                f"{len(checks)} passed**"
+                + (f", {n_over} overridden" if n_over else "")
+                + (f", {n_fail} FAILED" if n_fail else "")
+                + " — verified from the files this run wrote (Checks tab).")
+        (st.error if n_fail else st.warning if n_over else st.success)(line)
+    else:
+        st.warning("**Run checks: not recorded.** This run predates the post-run "
+                   "checks; treat its outputs as unverified.")
 
     for w in result.report.warnings:
         st.warning(w)
@@ -80,10 +124,43 @@ def render(result, cfg=None) -> None:
                  f"is stopped before it finishes; re-running resumes where it "
                  f"stopped.")
 
+    pending = int(s.get("n_pending_manual_review", 0) or 0)
+    if pending:
+        st.warning(f"**{pending:,} rejected applicant(s) are pending manual review:** "
+                   f"no adverse factor could be stated in Regulation B wording, so no "
+                   f"notice was issued. Their drivers are in "
+                   f"`internal/internal_review_flags.csv`.")
+
+    status = s.get("model_registry_status", "not recorded")
+    approved = bool(s.get("model_approved"))
     st.info(f"Decision rule: reject at a {s['horizon_months']}-month default "
             f"probability of **{s['threshold']:.0%}** or higher. This is a policy "
-            f"choice, not a model output. Model `{s['model_tag']}` ({s['model']}), "
-            f"chosen by `decision.model_tag` in config.")
+            f"choice, not a model output"
+            + ("" if s.get("threshold_is_published", True) else
+               f" — and **not** the published {s.get('published_threshold', 0):.0%}")
+            + f". Model `{s['model_tag']}` ({s['model']}), registry status "
+            f"**{status}**" + (" (approved)." if approved else
+                               " — **not approved for lending decisions**."))
+
+    # Fair-lending monitoring, on every run.
+    flagged = s.get("n_fair_lending_flagged")
+    if flagged is not None:
+        share = float(s.get("fair_lending_flag_share", 0.0) or 0.0)
+        limit = float(s.get("fair_lending_review_share", 0.05) or 0.05)
+        text = (f"{int(flagged):,} of {int(s.get('n_explained', 0)):,} explained "
+                f"rejections ({share:.1%}) had a non-disclosable feature among the "
+                f"strongest adverse drivers"
+                + (f" ({s['fair_lending_flag_features']})"
+                   if s.get("fair_lending_flag_features") else "")
+                + f"; {int(s.get('n_top_driver_not_disclosable', 0)):,} as the single "
+                  f"strongest. Review threshold: {limit:.0%}.")
+        if s.get("fair_lending_review_required"):
+            st.error(f"**Fair-lending review required.** {text} The stated reasons "
+                     f"exclude these features, so the notices cannot show it: the "
+                     f"detail is in `internal/internal_review_flags.csv`.",
+                     icon=":material/balance:")
+        else:
+            st.caption(f"Fair-lending monitor: {text}")
 
     # ----------------------------------------------------------- headline --
     c = st.columns(5)
@@ -97,8 +174,8 @@ def render(result, cfg=None) -> None:
         st.caption(
             f"Reasons generated for {s['n_explained']:,} of {s['n_rejected']:,} "
             f"rejected applicants by **{s.get('explainer', 'survshap')}**"
-            + (f" — {missing_reasons:,} still without reasons."
-               if missing_reasons else " (all of them).")
+            + (f" — {missing_reasons:,} without reasons." if missing_reasons else
+               f" — {pending_n:,} pending." if pending_n else " (all of them).")
             + (f"  Profiled and drift-checked on a random sample of "
                f"{s['profiled_rows']:,} of {s['n_rows']:,} rows."
                if s.get("profiled_rows", 0) < s["n_rows"] else ""))
@@ -107,6 +184,17 @@ def render(result, cfg=None) -> None:
     if s.get("features_missing_optional"):
         st.caption(f"Scored without (optional, measured cost in the Data profile "
                    f"tab): {s['features_missing_optional']}.")
+
+    st.markdown(f"**First decisions** (first {min(len(scored), 25)} of "
+                f"{s['n_rows']:,} rows; every row is in the downloads)")
+    st.dataframe(scored.head(25), hide_index=True, width="stretch")
+
+
+def render_details(result) -> None:
+    """Charts, reasons, profile, drift and downloads: drawn after the headline."""
+    s = result.summary
+    agg = result.aggregates
+    checks = getattr(result, "checks", None)
 
     # ------------------------------------------------------------- charts --
     left, right = st.columns(2)
@@ -156,13 +244,19 @@ def render(result, cfg=None) -> None:
                                          colour=REJECT),
                         use_container_width=True)
 
-    st.markdown(f"**Preview** (first {min(len(scored), 25)} of {s['n_rows']:,} rows; "
-                f"the full report is in the download)")
-    st.dataframe(scored.head(25), hide_index=True, width="stretch")
-
     # --------------------------------------------------------------- tabs --
-    tab_clean, tab_profile, tab_drift = st.tabs(
-        ["Cleaning report", "Data profile", "Drift check"])
+    tab_checks, tab_clean, tab_profile, tab_drift = st.tabs(
+        ["Checks", "Cleaning report", "Data profile", "Drift check"])
+
+    with tab_checks:
+        if checks is None or checks.empty:
+            st.caption("No checks recorded for this run.")
+        else:
+            st.caption("Computed after every file was written, by reading the files "
+                       "back. A FAIL on a blocking check stops the run before it is "
+                       "marked finished; OVERRIDDEN means the operator chose it and "
+                       "the run is stamped not for lending decisions.")
+            st.dataframe(checks, hide_index=True, width="stretch")
 
     with tab_clean:
         cr = result.clean_report
@@ -247,8 +341,12 @@ def render(result, cfg=None) -> None:
         "approved_applicants.csv": f"Approved only ({s['n_approved']:,} rows)",
         "rejected_applicants.csv": f"Rejected only ({s['n_rejected']:,} rows), with "
                                    "Regulation B reasons and fair-lending flags",
-        "adverse_action_notices.zip": f"{s['n_notices']:,} formatted adverse-action "
-                                      "notices",
+        "adverse_action_notices.zip": f"{s['n_notices']:,} applicant notices — "
+                                      "only what the applicant is given",
+        "internal/internal_review_flags.csv": "INTERNAL — never send to applicants: "
+                                              "fair-lending flags, drivers, "
+                                              "attributions",
+        "validation_checks.csv": "Pass/fail of every post-run check",
         "cleaning_report.csv": "What cleaning did: per rule and per column",
         "data_drift.csv": "Per-feature drift of this file against the training data",
         "run_summary.csv": "One row describing this run, for traceability",
@@ -261,14 +359,18 @@ def render(result, cfg=None) -> None:
                 st.caption(f"{name} — not produced"
                            + (" (no rejected applicants)" if "notice" in name else ""))
                 continue
+            # A callable: the file is read when the button is clicked, not on
+            # every rerun of the page.
             st.download_button(
-                f"⬇ {name}", path.read_bytes(), file_name=name,
+                f"⬇ {name}", (lambda p=path: p.read_bytes()),
+                file_name=name.rsplit("/", 1)[-1],
                 mime="application/zip" if name.endswith(".zip") else "text/csv",
-                width="stretch", key=f"dl_{name}")
-            st.caption(label)
-    st.download_button("⬇ Download all (ZIP)", bundle_zip(result),
+                width="stretch", key=f"dl_{name}", on_click="ignore")
+            st.caption(label + f" · {path.stat().st_size / 1e6:,.1f} MB")
+    st.download_button("⬇ Download all (ZIP)", (lambda: bundle_zip(result)),
                        file_name=f"{result.run_dir.name}.zip",
-                       mime="application/zip", type="primary", key="dl_all")
+                       mime="application/zip", type="primary", key="dl_all",
+                       on_click="ignore")
 
     with st.expander("Run details"):
         st.json(s, expanded=False)

@@ -1,0 +1,36 @@
+# Everything needed to run creditsurv under Linux / WSL2: the pipeline, the app and
+# the tests. Mirrors pyproject.toml (dependencies + the ui and dev extras);
+# tests/test_wsl_launcher.py fails if the two drift apart.
+#
+# One system package is not installable with pip. lightgbm links against the GCC
+# OpenMP runtime, and without it `import lightgbm` fails with
+# "libgomp.so.1: cannot open shared object file":
+#
+#     sudo apt install libgomp1
+#
+# Then, from ~/creditsurv (the "-e ." line is resolved against the current folder):
+#
+#     python3 -m venv .venv
+#     .venv/bin/python -m pip install -r requirements-linux.txt
+
+# Pipeline
+pandas>=2.1
+numpy>=1.26
+scipy>=1.11
+pyarrow>=14
+scikit-learn>=1.4
+lightgbm>=4.0
+shap>=0.44
+lifelines>=0.30
+matplotlib>=3.8
+pyyaml>=6.0
+
+# App (the "ui" extra)
+streamlit>=1.40
+psutil>=5.9
+
+# Tests (the "dev" extra)
+pytest>=8.0
+
+# The project itself, editable, so `import creditsurv` sees the synced source.
+-e .

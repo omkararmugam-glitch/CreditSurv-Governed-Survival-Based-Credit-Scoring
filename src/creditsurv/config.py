@@ -26,6 +26,9 @@ class Paths:
     models_dir: Path = Path("outputs/models")
     figures_dir: Path = Path("outputs/figures")
     tables_dir: Path = Path("outputs/tables")
+    registry: Path = Path("config/models.yaml")
+    """The model registry (creditsurv.registry): which models may score for
+    lending decisions."""
 
     @property
     def accepted_parquet(self) -> Path:
@@ -147,8 +150,10 @@ class DecisionConfig:
     (see the Stage 4 selection-bias result).
     """
 
-    model_tag: str = "full"
-    """Which trained bundle the dashboard scores with."""
+    model_tag: str = "full_applicant_nogeo"
+    """Which trained bundle scoring uses by default. It must be approved in the
+    model registry (config/models.yaml) or the run is refused; see
+    creditsurv.registry."""
     model: str = "discrete_hazard"
     horizon_months: int = 36
     reject_at_or_above: float = 0.30
@@ -189,6 +194,30 @@ class DecisionConfig:
     (creditsurv.runner) instead of inside the page, so the browser can be left.
     Small files stay inline: a background run reloads the model and its SHAP
     background from scratch, which costs 20-40s the page already has cached."""
+    explain_confirm_above: int = 1000
+    """Phase 2 (reasons and notices) starts on its own when a run has at most this
+    many rejected applicants. Above it, the dashboard asks first -- explain all, a
+    random sample of N, or skip (stamped not for lending decisions) -- and the CLI
+    stops after Phase 1 and prints the three commands. Counted in rejected
+    applicants, not megabytes, because that is what Phase 2's time is proportional
+    to: a large file that is mostly approved is quick to explain. Any file, any
+    caller; nothing branches on a name."""
+    explain_seconds_each: float = 2.1
+    """Wall seconds per rejected applicant for SurvSHAP(t) at the scoring settings on
+    this machine (FINDINGS D5 measured 2.06 s with the pool). Used only for the ETA
+    shown before Phase 2 starts; while it runs, the ETA is measured."""
+    phase2_checkpoint_seconds: float = 20.0
+    """How often Phase 2 writes the reasons it has into rejected_applicants.csv and
+    the notice zip while it runs (at least; it stretches the gap for a large file so
+    rewriting never costs more than a fifth of the time)."""
+    fair_lending_review_share: float = 0.05
+    """Every run reports the share of rejections in which a non-disclosable feature
+    (addr_state, zip_code, policy_code) was among the strongest adverse drivers.
+    Above this share the dashboard asks for fair-lending review. 5%: one decline in
+    twenty resting partly on a reason the lender may not state is systematic, not
+    incidental -- and for a model with no such input the share is 0 by
+    construction, so anything above it is itself a finding. Test 1 on the
+    deprecated full model measured 65% (166 of 255)."""
     min_feature_coverage: float = 0.60
     """Below this share of the model's features present in the upload, the run is
     flagged as degraded everywhere it is reported."""
@@ -226,6 +255,7 @@ def load_config(path: str | Path = "config/config.yaml") -> Config:
         models_dir=Path(pr.get("models_dir", "outputs/models")),
         figures_dir=Path(pr.get("figures_dir", "outputs/figures")),
         tables_dir=Path(pr.get("tables_dir", "outputs/tables")),
+        registry=Path(pr.get("registry", "config/models.yaml")),
     )
 
     def section(name: str, cls):

@@ -1632,6 +1632,222 @@ fire because there was nothing left to stop for. A higher cap would change the f
 decimal place of a concordance at best, so **no retrain is warranted**, and the cap
 stays at 600.
 
+## 7l. Test 1: what it found, the model registry, and the decision on `full`
+
+`test_1_baseline_1k.csv` (1,000 applicants, the `full` model, run
+`20260925_170937_test_1_baseline_1k`) scored cleanly -- 745 approved, 255 rejected,
+every rejection explained -- and exposed three problems that no test had caught.
+Each is now fixed in the pipeline itself, for every path that scores or writes a
+notice, rather than for this file.
+
+**1. Internal content in applicant notices.** 166 of the 255 notices in
+`adverse_action_notices.zip` carried the block `[INTERNAL REVIEW FLAG -- NOT PART
+OF THE APPLICANT NOTICE]` naming `addr_state`. The label was true and the placement
+was not: one `render()` produced both documents. The notice builder now produces two
+outputs. The **applicant notice** carries only what Regulation B and FCRA 615(a)
+give the applicant. The **internal review record** carries the fair-lending flag,
+the strongest adverse drivers before filtering (non-disclosable ones included, with
+rank and attribution), the feature behind each stated reason, the model and the
+predicted risk. Records go to `internal/internal_review_flags.csv` and
+`internal/internal_review_records.jsonl` in the run folder. Stage 3 writes its
+record to `outputs/tables/internal/`. Nothing internal goes into the notice zip. The
+applicant notice screens its own text when it renders, and refuses to return one
+that contains internal wording, a model feature name, or a number formatted like an
+attribution or probability. The run then reads the zip back from disk and screens
+every notice again (check 7 below).
+
+A related gap closed at the same time: an explained rejection with **no**
+disclosable reason used to get a notice reading "No individual factor was materially
+adverse". That does not meet 12 CFR 1002.9(b)(2). Such a row is now marked `pending
+manual review: no disclosable adverse reason`, gets no notice, and its drivers are in
+the internal record. So `n_notices` is now the number of rejections with stated
+reasons, not the number explained. `n_pending_manual_review` counts the rest.
+
+**2. Nothing approved the model.** Scoring used whatever `decision.model_tag` named.
+That was `full`: it has the 7c defect (no credit score, no employment length) and it
+uses `addr_state`. `config/models.yaml` is now a registry of all twelve trained
+models. For each it records: the features, the training data and split, the
+validation metrics, known defects, the non-disclosable features it uses, and one
+status (`approved`, `candidate`, `benchmark`, `deprecated`). A fourth status was
+needed beyond the three asked for: `candidate`, meaning "proposed, evidence
+incomplete". Without it, a model that has not yet passed could only be recorded as
+approved, which would be false.
+
+A model counts as approved only when `scripts/07_model_registry.py approve` has
+checked the rules below and written an approval block, naming who approved it and
+the SHA-256 of every evidence file. On every run, scoring re-checks that the model
+file hashes to the approved one, that its features are the recorded ones, that every
+evidence file is unchanged, and that the explainer and its settings are covered. A
+model that fails is refused. An explicit override (`--allow-unapproved-model`, or
+the tick-box on the page) lets the run proceed, but it is then stamped **not for
+lending decisions** in `run_summary.csv`, in every row of the scored file, in
+`provenance.json`, on the page, and at the top of every notice. A threshold other
+than the published `decision.reject_at_or_above` gets the same stamp.
+
+<!-- keep:approval-rules -->
+**Approval rules** (fixed here, before `full_applicant_nogeo` has results for A5 or A6):
+
+| rule | requirement |
+|---|---|
+| A1 | the model file exists and hashes to the recorded SHA-256 |
+| A2 | the recorded features match what Stage 2 recorded (`02_metrics_<tag>.json`) |
+| A3 | no known defect is marked blocking |
+| A4 | cleaning values fitted on this model file's whole training split |
+| A5 | a measured ablation (03e) for this model file |
+| A6 | an explainer validation (03d) for this model file, in which SurvSHAP(t) against itself at the scoring settings reaches top-1 agreement >= 90% and top-4 overlap >= 0.85 |
+| A7 | scoring at SurvSHAP(t) settings other than the ones A6 measured requires a passing 03f for this model file |
+
+The A6 bar reuses 7a's S1/S2 on purpose. A cheaper setting is only accepted if its
+reasons agree that well with the full settings. The full settings should be held to
+the same standard against themselves, or the stated reasons are partly noise. `full`
+measured 95.3% / 0.936. TreeSHAP is approved for a model only if that model's own
+03d verdict is PASS. For `full` it was FAIL (7.1).
+<!-- /keep:approval-rules -->
+
+*Addendum, 2026-09-27, before any 03d result exists for `full_applicant_nogeo`:*
+**A6 counts every validation of the model file, not the latest.** As first written,
+the check read whichever 03d file sorted last. So running 03d again under a new
+output tag until the sampling noise fell the right way would have met the bar. Now
+every validation recorded for that model file must meet the bar. A failing one is
+cancelled only by replacing it deliberately with `--overwrite`, which leaves a
+provenance trail. For the same reason, the Model registry page offers no second run
+once any evidence for a rule exists.
+
+**Does the SurvSHAP settings validation (D3, `03f`) have to be rerun for the new
+model? Only before cheaper settings are used with it, not to approve it at the full
+settings.** 7a already says the comparison's answer belongs to one model. How many
+coalition samples a Shapley estimate needs depends on the response surface being
+explained, and `full_applicant_nogeo` has a different feature set. But scoring uses
+the full settings (600/100), and A6 measures reproducibility at exactly those. So D3
+blocks approval only if scoring moves to cheaper settings, and A7 enforces that. 03f
+has never been run on any model. Its default reference was `full`'s 03d, and both
+models read the same data file, so running it for the new model would have compared
+the new model's reasons with `full`'s without any error. It now refuses a reference
+built on a different model.
+
+**The decision.** `full` is **deprecated**, with two blocking defects recorded: 7c,
+and this test's result (addr_state among the top adverse drivers for 166 of 255
+declines). `full_applicant_nogeo` (7i, 7k) is the proposed replacement and is now
+`decision.model_tag`. It is a **candidate**, not yet approved. Checked on the files
+on disk (2026-09-25): A1-A4 pass, including cleaning values fitted on all
+1,806,232 training rows of this model file. A5 and A6 fail because neither run
+exists yet. Until they pass and `approve` is run, scoring with the default refuses,
+which is the intended behaviour. *Update 2026-09-27:* the ablation
+(`03e_ablation_full_applicant_nogeo.json`) is now on disk and A5 passes. A6 and A7
+still fail because the explainer validation has not been run.
+
+*Update 2026-09-27, later:* the explainer validation has run
+(`03d_explainer_validation_explainer_full_applicant_nogeo.json`, 1,000 applicants
+declined at 0.30, this model file). SurvSHAP(t) against itself, on 300 of them at the
+scoring settings (600/100), agrees on the top reason for **97.0%** with a mean top-4
+overlap of **0.959**, against A6's bars of 90% and 0.85. A6 passes, and A7 passes
+because scoring uses those same settings. **All seven rules pass.** TreeSHAP as a
+stand-in fails again, exactly as it did for `full` in 7.1: the same top reason for
+80.2% (bar 90%), with a top-4 overlap of 0.880 (bar 0.75), so
+`decision.bulk_explainer` stays `survshap`. Passing the rules is not approval. The
+model stays a **candidate** until someone signs off with `07_model_registry.py
+approve`, and until then scoring still needs the explicit override. *The approval is to
+be recorded here when it is given.*
+
+**3. Nothing checked the outputs.** After writing its files, and before
+`provenance.json` marks it finished, every run now reads its outputs back from disk
+and writes `validation_checks.csv`:
+
+| check | verifies |
+|---|---|
+| `counts_add_up` | approved + rejected = rows read, in all three decision files |
+| `decisions_match_threshold` | every decision equals (risk >= the run's threshold); no row without a risk |
+| `threshold_is_published` | that threshold is `decision.reject_at_or_above` (else OVERRIDDEN, stamped) |
+| `risk_12m_le_36m` | 12-month risk <= 36-month risk on every row |
+| `rejected_have_reasons_or_pending` | every rejection has a reason, or is marked pending |
+| `no_nondisclosable_stated_reason` | no stated reason rests on geography or Lending Club's own score, and every reason is template wording |
+| `applicant_notices_clean` | every notice in the zip passes the screen, and the notices match the rejected file one to one |
+| `model_approved` | the model is approved (else FAIL, or OVERRIDDEN when explicitly overridden) |
+
+A blocking failure fails the run loudly. The notices are renamed
+`adverse_action_notices.WITHHELD.zip`, a `RUN_FAILED_CHECKS.txt` says why, and
+`provenance.json` is never written, so neither the page nor `load_result` can show
+the run as finished.
+
+**Fair-lending monitoring, on every run.** `run_summary.csv` now records the share
+of explained rejections where a non-disclosable feature was among the strongest
+adverse drivers (the same top-8 definition as the flag), how many had it as the
+single strongest, and which features. Above `decision.fair_lending_review_share` the
+page asks for fair-lending review. **Proposed threshold: 5%.** If more than one
+decline in twenty rests partly on a reason the lender may not state, the model
+depends on it systematically, not incidentally. For a model with no such input the
+share is zero by construction, so anything above zero is itself a finding. Test 1
+measured **65%** (166 of 255).
+
+**Caveat on the threshold.** `reject_at_or_above: 0.30` was chosen on `full`'s test
+split (17.0% declined). The new model's predictions differ, so its approval rate at
+0.30 is not known until it is measured. The test 1 rerun will give the first number
+on that file.
+
+## 7m. Decisions first, reasons after: what the two phases measured
+
+Scoring used to explain every rejected applicant before writing any row. On the
+1k baseline nothing appeared for 490 s, of which 490.1 s was explanation. The 484 MB
+file (1.3M rows) never finished: after 62 minutes it had explained 1,434 applicants
+and written no decisions. Scoring now runs in two phases, one function each, used by
+every caller: `batch.score_file` writes and checks the decisions, and
+`phase2.explain_run` adds reasons and notices as they are generated.
+
+**Phase 1**, measured in WSL with `full_applicant_nogeo` (explicit override, since it
+is not approved), with every post-run check passing:
+
+| file | rows | rejected | Phase 1 | peak memory |
+|---|---|---|---|---|
+| test_1_baseline_1k | 1,000 | 208 | 0.76 s | 2.1 GB* |
+| test_2_renamed_1k (11 columns mapped) | 1,000 | 495 | 0.80 s | 2.1 GB* |
+| test_3_messy_1k | 1,010 | 232 | 0.79 s | 0.8 GB |
+| test_4_drifted_1k | 1,000 | 357 | 0.71 s | 0.8 GB |
+| test_4_drifted_450mb | 1,300,000 | 458,713 | 140 s | 2.5 GB |
+
+\*Still holding memory from the model load, which peaks at 3.0 GB and happens once.
+
+The cost is about 0.5 s fixed plus 0.107 s per 1,000 rows, on every file whatever
+its shape or reject rate, because Phase 1 explains nobody. On the large file: clean
+22 s, score 48 s, write 51 s, profile and drift 2 s, final outputs and read-back
+checks 9 s.
+
+**The filesystem.** The same large run entirely on `/mnt/c` took 191 s against 140 s,
+with identical decisions. Cleaning and scoring cost the same (22 s, 48-49 s). The
+difference is file I/O: writing rows took 69 s against 51 s, the final outputs and
+read-back 26 s against 9 s, and model loading 5.7 s against 3.7 s. Serving from
+`~/creditsurv` is about 25% faster for a large file and makes no measurable
+difference for a small one.
+
+**A decision-rule defect the checks found at scale.** Risk was written rounded to
+four decimals, but the decision was taken on the unrounded value. So an applicant at
+0.29996 was approved while the file showed 0.3, which the published rule rejects.
+That happened for 145 of 1.3M rows (about 1 in 9,000), too rarely to appear in a 1k
+file. `decisions_match_threshold` failed the large run, and the run was stopped as
+designed. The decision is now taken on exactly the value written (`RISK_DECIMALS =
+4`), so a file can never contradict its own threshold. Applicants within 0.00005 of
+the threshold move to the side the published number puts them on.
+
+**Phase 2 throughput is fixed by the machine, not by the pool.** With the pool as it
+was, five workers each let LightGBM use all 32 cores, and throughput fell to 7.5
+applicants a minute, below a single process (27/min). With each worker capped at its
+share of the cores and the parent at one thread, it is 31.4/min: 208 rejections in
+6.7 minutes, the first reason on disk after 10 s. That equals the old three-worker
+figure (31/min) and D2's 1.1-1.2× speedup. SurvSHAP(t) at 600/100 costs about 2 s
+of this machine per applicant however the work is split. So explaining all 458,713
+rejections of the large file would take about 10 days, and the page asks before
+Phase 2 on any run above `decision.explain_confirm_above` (1,000) rejected
+applicants.
+
+**The dashboard.**
+* The model is loaded once per server: 8.8 s cold, 0.04 s after. Before, it was
+  loaded twice per upload, each time with a 3 GB peak.
+* The 1.3M-row run opens in 0.15 s and draws in 2.5 s. Before, every rerun of that
+  page read 1.5 GB of outputs and spent 81 s zipping the run for "Download all";
+  downloads are now read only when clicked.
+* Warm page reruns take 0.27 s, against 0.48 s before. Cold first renders are
+  dominated by importing pandas and numpy (about 1.7 s) and vary from 1.2 s on the
+  Linux filesystem to 2.7-3.9 s on `/mnt/c`, against 2.3 s before.
+
 ## 7a. Cheaper SurvSHAP(t) settings for bulk runs
 
 <!-- keep:preregistration-settings -->

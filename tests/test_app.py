@@ -42,6 +42,14 @@ def test_read_only_pages_render(page):
     _run(page)
 
 
+def test_header_says_where_the_app_runs():
+    """A Windows and a WSL instance of the app look identical otherwise."""
+    from creditsurv.environment import runtime_label
+
+    at = _run("findings.py")
+    assert any(f"Running on {runtime_label()}" in m.value for m in at.markdown)
+
+
 def test_run_page_defaults_are_safe():
     at = _run("run.py")
     assert at.radio[0].value == "Small"
@@ -74,14 +82,16 @@ def test_home_background_switch_is_off_by_default():
 
 # ------------------------------------------------ the finished-run dashboard --
 
-def _finished_run(tmp_path):
+def _finished_run(tmp_path, *, status="approved", allow_unapproved=False,
+                  threshold=None):
     """A real run directory, produced by the stub-model fixtures in test_batch."""
     import test_batch as tb
 
     cfg = tb.Config(paths=tb.Paths(data_dir=tmp_path / "data",
                                    models_dir=tmp_path / "models",
                                    figures_dir=tmp_path / "figures",
-                                   tables_dir=tmp_path / "tables"),
+                                   tables_dir=tmp_path / "tables",
+                                   registry=tmp_path / "models.yaml"),
                     decision=tb.DecisionConfig(
                         model_tag="stub", horizon_months=36,
                         reject_at_or_above=0.45,
@@ -90,15 +100,18 @@ def _finished_run(tmp_path):
                         background_rows=200, explain_workers=1))
     train = tb._training_frame()
     dm = tb.build_design_matrix(train, tb.SPEC, flavour="gbm")
+    model_path = tb._write_dummy_model(cfg)
+    tb.write_registry(cfg, model_path, status=status)
     ctx = tb.ScoringContext(
         cfg=cfg, model_tag="stub", model_name="discrete_hazard", model=tb.StubModel(),
         spec=tb.SPEC, bundle={"artefacts": {"gbm_columns": list(dm.X.columns)}},
-        model_path=tb._write_dummy_model(cfg), background=dm.X, reference=train,
+        model_path=model_path, background=dm.X, reference=train,
         clean_values=tb.fit_values(train, tb.SPEC, source="stub.parquet"),
         policy=tb.policy_from_config(cfg),
         times=np.array([6.0, 12.0, 24.0, 36.0]), data_source=tb._dummy_source(cfg))
     return tb.run_batch(tb._upload(30), "applicants.csv", cfg, ctx=ctx,
-                        runs_dir=tmp_path / "runs")
+                        runs_dir=tmp_path / "runs", threshold=threshold,
+                        allow_unapproved_model=allow_unapproved)
 
 
 def test_dashboard_renders_every_panel_and_tab(tmp_path):

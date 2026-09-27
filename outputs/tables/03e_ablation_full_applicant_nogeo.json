@@ -1,0 +1,812 @@
+{
+  "tag": "full_applicant_nogeo",
+  "model_tag": "full_applicant_nogeo",
+  "model": "discrete_hazard",
+  "n_test_rows": 50000,
+  "sampled": true,
+  "baseline": {
+    "concordance": 0.6894568051644266,
+    "auc_12m": 0.7000251118060392
+  },
+  "horizons": [
+    6,
+    12,
+    18,
+    24,
+    30,
+    36
+  ],
+  "seconds_per_pass": 1.44,
+  "features": [
+    {
+      "scope": "feature",
+      "name": "loan_to_income",
+      "n_features": 1,
+      "concordance": 0.6812447690289947,
+      "concordance_drop": 0.008212036135431977,
+      "auc_12m": 0.6918616694626784,
+      "auc_12m_drop": 0.00816344234336086
+    },
+    {
+      "scope": "feature",
+      "name": "acc_open_past_24mths",
+      "n_features": 1,
+      "concordance": 0.6813550421064534,
+      "concordance_drop": 0.008101763057973277,
+      "auc_12m": 0.6904997412414591,
+      "auc_12m_drop": 0.009525370564580138
+    },
+    {
+      "scope": "feature",
+      "name": "purpose",
+      "n_features": 1,
+      "concordance": 0.682236758620705,
+      "concordance_drop": 0.007220046543721659,
+      "auc_12m": 0.6887512778444771,
+      "auc_12m_drop": 0.011273833961562119
+    },
+    {
+      "scope": "feature",
+      "name": "application_type",
+      "n_features": 1,
+      "concordance": 0.6837465470161057,
+      "concordance_drop": 0.005710258148320935,
+      "auc_12m": 0.694309573721653,
+      "auc_12m_drop": 0.005715538084386185
+    },
+    {
+      "scope": "feature",
+      "name": "fico_midpoint",
+      "n_features": 1,
+      "concordance": 0.6837661275232074,
+      "concordance_drop": 0.005690677641219222,
+      "auc_12m": 0.6924188326894448,
+      "auc_12m_drop": 0.007606279116594394
+    },
+    {
+      "scope": "feature",
+      "name": "dti",
+      "n_features": 1,
+      "concordance": 0.684005420729239,
+      "concordance_drop": 0.005451384435187667,
+      "auc_12m": 0.694780245521748,
+      "auc_12m_drop": 0.005244866284291216
+    },
+    {
+      "scope": "feature",
+      "name": "mo_sin_old_rev_tl_op",
+      "n_features": 1,
+      "concordance": 0.6840137552891131,
+      "concordance_drop": 0.0054430498753135215,
+      "auc_12m": 0.6923106757495271,
+      "auc_12m_drop": 0.0077144360565121195
+    },
+    {
+      "scope": "feature",
+      "name": "revol_bal",
+      "n_features": 1,
+      "concordance": 0.6840334728026785,
+      "concordance_drop": 0.00542333236174819,
+      "auc_12m": 0.6946437268941383,
+      "auc_12m_drop": 0.005381384911900877
+    },
+    {
+      "scope": "feature",
+      "name": "loan_amnt",
+      "n_features": 1,
+      "concordance": 0.6845847582695346,
+      "concordance_drop": 0.004872046894892068,
+      "auc_12m": 0.693001580974817,
+      "auc_12m_drop": 0.007023530831222202
+    },
+    {
+      "scope": "feature",
+      "name": "bc_util",
+      "n_features": 1,
+      "concordance": 0.6848120120325698,
+      "concordance_drop": 0.004644793131856839,
+      "auc_12m": 0.6941856166509646,
+      "auc_12m_drop": 0.005839495155074648
+    },
+    {
+      "scope": "feature",
+      "name": "annual_inc",
+      "n_features": 1,
+      "concordance": 0.6860378602405856,
+      "concordance_drop": 0.003418944923841094,
+      "auc_12m": 0.6944851663638325,
+      "auc_12m_drop": 0.005539945442206706
+    },
+    {
+      "scope": "feature",
+      "name": "term_months",
+      "n_features": 1,
+      "concordance": 0.6861290037905521,
+      "concordance_drop": 0.0033278013738745615,
+      "auc_12m": 0.6961113998176537,
+      "auc_12m_drop": 0.0039137119883855265
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_recent_inq",
+      "n_features": 1,
+      "concordance": 0.686982919409881,
+      "concordance_drop": 0.002473885754545657,
+      "auc_12m": 0.6958276613324339,
+      "auc_12m_drop": 0.004197450473605313
+    },
+    {
+      "scope": "feature",
+      "name": "emp_length_years",
+      "n_features": 1,
+      "concordance": 0.6870658311548211,
+      "concordance_drop": 0.0023909740096055287,
+      "auc_12m": 0.696756036281406,
+      "auc_12m_drop": 0.0032690755246331804
+    },
+    {
+      "scope": "feature",
+      "name": "tot_hi_cred_lim",
+      "n_features": 1,
+      "concordance": 0.6871313373702707,
+      "concordance_drop": 0.0023254677941559887,
+      "auc_12m": 0.6972341704220897,
+      "auc_12m_drop": 0.00279094138394953
+    },
+    {
+      "scope": "feature",
+      "name": "total_bc_limit",
+      "n_features": 1,
+      "concordance": 0.6871370516815268,
+      "concordance_drop": 0.002319753482899811,
+      "auc_12m": 0.699150768490461,
+      "auc_12m_drop": 0.0008743433155782299
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_recent_bc",
+      "n_features": 1,
+      "concordance": 0.6871630372408059,
+      "concordance_drop": 0.002293767923620793,
+      "auc_12m": 0.696308785032795,
+      "auc_12m_drop": 0.003716326773244183
+    },
+    {
+      "scope": "feature",
+      "name": "revol_util",
+      "n_features": 1,
+      "concordance": 0.6872418159574248,
+      "concordance_drop": 0.002214989207001805,
+      "auc_12m": 0.6959496240771025,
+      "auc_12m_drop": 0.004075487728936733
+    },
+    {
+      "scope": "feature",
+      "name": "num_tl_op_past_12m",
+      "n_features": 1,
+      "concordance": 0.6872611681204204,
+      "concordance_drop": 0.002195637044006271,
+      "auc_12m": 0.6960508248681843,
+      "auc_12m_drop": 0.003974286937854954
+    },
+    {
+      "scope": "feature",
+      "name": "total_rev_hi_lim",
+      "n_features": 1,
+      "concordance": 0.6873498227196301,
+      "concordance_drop": 0.002106982444796568,
+      "auc_12m": 0.6991582628333756,
+      "auc_12m_drop": 0.0008668489726636475
+    },
+    {
+      "scope": "feature",
+      "name": "inq_last_6mths",
+      "n_features": 1,
+      "concordance": 0.6873681872943666,
+      "concordance_drop": 0.0020886178700600944,
+      "auc_12m": 0.6977889792681929,
+      "auc_12m_drop": 0.0022361325378462693
+    },
+    {
+      "scope": "feature",
+      "name": "total_bal_ex_mort",
+      "n_features": 1,
+      "concordance": 0.6873978663195623,
+      "concordance_drop": 0.0020589388448643,
+      "auc_12m": 0.6983489797502682,
+      "auc_12m_drop": 0.0016761320557709958
+    },
+    {
+      "scope": "feature",
+      "name": "pct_tl_nvr_dlq",
+      "n_features": 1,
+      "concordance": 0.6876901011066029,
+      "concordance_drop": 0.0017667040578237536,
+      "auc_12m": 0.6987267291849195,
+      "auc_12m_drop": 0.001298382621119698
+    },
+    {
+      "scope": "feature",
+      "name": "home_ownership",
+      "n_features": 1,
+      "concordance": 0.6878343632042608,
+      "concordance_drop": 0.0016224419601658102,
+      "auc_12m": 0.6981138396849957,
+      "auc_12m_drop": 0.0019112721210434724
+    },
+    {
+      "scope": "feature",
+      "name": "tax_liens",
+      "n_features": 1,
+      "concordance": 0.6879982229348284,
+      "concordance_drop": 0.0014585822295982709,
+      "auc_12m": 0.6984240704807056,
+      "auc_12m_drop": 0.0016010413253335631
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_last_record",
+      "n_features": 1,
+      "concordance": 0.6883301895963377,
+      "concordance_drop": 0.0011266155680889067,
+      "auc_12m": 0.6985247869255431,
+      "auc_12m_drop": 0.0015003248804961178
+    },
+    {
+      "scope": "feature",
+      "name": "mo_sin_rcnt_rev_tl_op",
+      "n_features": 1,
+      "concordance": 0.688334236995619,
+      "concordance_drop": 0.001122568168807625,
+      "auc_12m": 0.698900037682843,
+      "auc_12m_drop": 0.0011250741231961792
+    },
+    {
+      "scope": "feature",
+      "name": "mo_sin_rcnt_tl",
+      "n_features": 1,
+      "concordance": 0.6884607453390245,
+      "concordance_drop": 0.0009960598254021846,
+      "auc_12m": 0.6981823906869583,
+      "auc_12m_drop": 0.0018427211190809034
+    },
+    {
+      "scope": "feature",
+      "name": "mo_sin_old_il_acct",
+      "n_features": 1,
+      "concordance": 0.6884737381186639,
+      "concordance_drop": 0.0009830670457627866,
+      "auc_12m": 0.6982686397051945,
+      "auc_12m_drop": 0.0017564721008447304
+    },
+    {
+      "scope": "feature",
+      "name": "avg_cur_bal",
+      "n_features": 1,
+      "concordance": 0.6884799833299668,
+      "concordance_drop": 0.0009768218344597956,
+      "auc_12m": 0.6988776384803487,
+      "auc_12m_drop": 0.00114747332569054
+    },
+    {
+      "scope": "feature",
+      "name": "pub_rec_bankruptcies",
+      "n_features": 1,
+      "concordance": 0.6885420643838243,
+      "concordance_drop": 0.0009147407806023855,
+      "auc_12m": 0.6985221897742097,
+      "auc_12m_drop": 0.0015029220318295566
+    },
+    {
+      "scope": "feature",
+      "name": "num_sats",
+      "n_features": 1,
+      "concordance": 0.6886962937017153,
+      "concordance_drop": 0.0007605114627113885,
+      "auc_12m": 0.6994015789078776,
+      "auc_12m_drop": 0.0006235328981616384
+    },
+    {
+      "scope": "feature",
+      "name": "total_il_high_credit_limit",
+      "n_features": 1,
+      "concordance": 0.6887408493454262,
+      "concordance_drop": 0.0007159558190004134,
+      "auc_12m": 0.6995654080510078,
+      "auc_12m_drop": 0.00045970375503145977
+    },
+    {
+      "scope": "feature",
+      "name": "num_bc_tl",
+      "n_features": 1,
+      "concordance": 0.6888515562766866,
+      "concordance_drop": 0.0006052488877400508,
+      "auc_12m": 0.699628437313605,
+      "auc_12m_drop": 0.0003966744924341903
+    },
+    {
+      "scope": "feature",
+      "name": "verification_status",
+      "n_features": 1,
+      "concordance": 0.6888521043025413,
+      "concordance_drop": 0.0006047008618853544,
+      "auc_12m": 0.6999419899203168,
+      "auc_12m_drop": 8.312188572245915e-05
+    },
+    {
+      "scope": "feature",
+      "name": "chargeoff_within_12_mths",
+      "n_features": 1,
+      "concordance": 0.688900832934792,
+      "concordance_drop": 0.0005559722296346603,
+      "auc_12m": 0.7004539802847419,
+      "auc_12m_drop": -0.00042886847870271527
+    },
+    {
+      "scope": "feature",
+      "name": "open_acc",
+      "n_features": 1,
+      "concordance": 0.6889367628798935,
+      "concordance_drop": 0.0005200422845331731,
+      "auc_12m": 0.6998402162436097,
+      "auc_12m_drop": 0.0001848955624295101
+    },
+    {
+      "scope": "feature",
+      "name": "total_acc",
+      "n_features": 1,
+      "concordance": 0.6889646779468693,
+      "concordance_drop": 0.0004921272175573144,
+      "auc_12m": 0.6991103396654804,
+      "auc_12m_drop": 0.000914772140558795
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_last_delinq",
+      "n_features": 1,
+      "concordance": 0.6889649062909755,
+      "concordance_drop": 0.0004918988734511354,
+      "auc_12m": 0.6996620774146136,
+      "auc_12m_drop": 0.00036303439142559846
+    },
+    {
+      "scope": "feature",
+      "name": "bc_open_to_buy",
+      "n_features": 1,
+      "concordance": 0.6890571458926515,
+      "concordance_drop": 0.0003996592717750991,
+      "auc_12m": 0.6997566505735179,
+      "auc_12m_drop": 0.00026846123252133314
+    },
+    {
+      "scope": "feature",
+      "name": "num_rev_tl_bal_gt_0",
+      "n_features": 1,
+      "concordance": 0.6891112634458072,
+      "concordance_drop": 0.0003455417186194465,
+      "auc_12m": 0.6986668122996119,
+      "auc_12m_drop": 0.0013582995064272962
+    },
+    {
+      "scope": "feature",
+      "name": "num_op_rev_tl",
+      "n_features": 1,
+      "concordance": 0.6891423011184346,
+      "concordance_drop": 0.00031450404599209225,
+      "auc_12m": 0.6997701015696391,
+      "auc_12m_drop": 0.00025501023640006615
+    },
+    {
+      "scope": "feature",
+      "name": "mort_acc",
+      "n_features": 1,
+      "concordance": 0.6892640884474455,
+      "concordance_drop": 0.00019271671698117832,
+      "auc_12m": 0.6997101447545551,
+      "auc_12m_drop": 0.0003149670514841496
+    },
+    {
+      "scope": "feature",
+      "name": "num_actv_bc_tl",
+      "n_features": 1,
+      "concordance": 0.6892968387008689,
+      "concordance_drop": 0.00015996646355775912,
+      "auc_12m": 0.6996549122333495,
+      "auc_12m_drop": 0.00037019957268968895
+    },
+    {
+      "scope": "feature",
+      "name": "num_bc_sats",
+      "n_features": 1,
+      "concordance": 0.6893115954387283,
+      "concordance_drop": 0.00014520972569831425,
+      "auc_12m": 0.6998029512467099,
+      "auc_12m_drop": 0.00022216055932933187
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_recent_bc_dlq",
+      "n_features": 1,
+      "concordance": 0.6893237205107644,
+      "concordance_drop": 0.00013308465366224098,
+      "auc_12m": 0.699813322367072,
+      "auc_12m_drop": 0.00021178943896715818
+    },
+    {
+      "scope": "feature",
+      "name": "delinq_2yrs",
+      "n_features": 1,
+      "concordance": 0.6893562481286843,
+      "concordance_drop": 0.00010055703574229913,
+      "auc_12m": 0.7000636592283264,
+      "auc_12m_drop": -3.854742228714958e-05
+    },
+    {
+      "scope": "feature",
+      "name": "num_actv_rev_tl",
+      "n_features": 1,
+      "concordance": 0.6893953863084771,
+      "concordance_drop": 6.141885594956875e-05,
+      "auc_12m": 0.6992651855127655,
+      "auc_12m_drop": 0.000759926293273705
+    },
+    {
+      "scope": "feature",
+      "name": "num_accts_ever_120_pd",
+      "n_features": 1,
+      "concordance": 0.6894107824098338,
+      "concordance_drop": 4.602275459286709e-05,
+      "auc_12m": 0.6999675363787422,
+      "auc_12m_drop": 5.7575427297007487e-05
+    },
+    {
+      "scope": "feature",
+      "name": "num_rev_accts",
+      "n_features": 1,
+      "concordance": 0.689429118441557,
+      "concordance_drop": 2.768672286967977e-05,
+      "auc_12m": 0.6995189022130719,
+      "auc_12m_drop": 0.0005062095929673216
+    },
+    {
+      "scope": "feature",
+      "name": "pub_rec",
+      "n_features": 1,
+      "concordance": 0.6894292725738286,
+      "concordance_drop": 2.753259059806723e-05,
+      "auc_12m": 0.6999765877061725,
+      "auc_12m_drop": 4.852409986666473e-05
+    },
+    {
+      "scope": "feature",
+      "name": "tot_coll_amt",
+      "n_features": 1,
+      "concordance": 0.689440535646864,
+      "concordance_drop": 1.6269517562617075e-05,
+      "auc_12m": 0.6999886221240974,
+      "auc_12m_drop": 3.648968194180924e-05
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_recent_revol_delinq",
+      "n_features": 1,
+      "concordance": 0.689451444786535,
+      "concordance_drop": 5.360377891672208e-06,
+      "auc_12m": 0.7001519641803933,
+      "auc_12m_drop": -0.00012685237435405838
+    },
+    {
+      "scope": "feature",
+      "name": "acc_now_delinq",
+      "n_features": 1,
+      "concordance": 0.6894525351296418,
+      "concordance_drop": 4.2700347848700915e-06,
+      "auc_12m": 0.7000253778251739,
+      "auc_12m_drop": -2.660191347203522e-07
+    },
+    {
+      "scope": "feature",
+      "name": "num_tl_90g_dpd_24m",
+      "n_features": 1,
+      "concordance": 0.6894590486452695,
+      "concordance_drop": -2.243480842878398e-06,
+      "auc_12m": 0.700048058077047,
+      "auc_12m_drop": -2.2946271007739938e-05
+    },
+    {
+      "scope": "feature",
+      "name": "delinq_amnt",
+      "n_features": 1,
+      "concordance": 0.689459139982912,
+      "concordance_drop": -2.3348184853277942e-06,
+      "auc_12m": 0.7000979592063706,
+      "auc_12m_drop": -7.284740033142167e-05
+    },
+    {
+      "scope": "feature",
+      "name": "mths_since_last_major_derog",
+      "n_features": 1,
+      "concordance": 0.6894771220812707,
+      "concordance_drop": -2.0316916844009825e-05,
+      "auc_12m": 0.7000625330855703,
+      "auc_12m_drop": -3.7421279531102414e-05
+    },
+    {
+      "scope": "feature",
+      "name": "log_annual_inc",
+      "n_features": 1,
+      "concordance": 0.6894776472727148,
+      "concordance_drop": -2.0842108288121608e-05,
+      "auc_12m": 0.6999254657603963,
+      "auc_12m_drop": 9.964604564294266e-05
+    },
+    {
+      "scope": "feature",
+      "name": "collections_12_mths_ex_med",
+      "n_features": 1,
+      "concordance": 0.6894803702761806,
+      "concordance_drop": -2.3565111753942602e-05,
+      "auc_12m": 0.7003594256875894,
+      "auc_12m_drop": -0.0003343138815501412
+    },
+    {
+      "scope": "feature",
+      "name": "num_tl_30dpd",
+      "n_features": 1,
+      "concordance": 0.6894874032746497,
+      "concordance_drop": -3.0598110223101216e-05,
+      "auc_12m": 0.7000443409769452,
+      "auc_12m_drop": -1.9229170906021054e-05
+    },
+    {
+      "scope": "feature",
+      "name": "initial_list_status",
+      "n_features": 1,
+      "concordance": 0.6894935457311049,
+      "concordance_drop": -3.674056667823944e-05,
+      "auc_12m": 0.701637428218047,
+      "auc_12m_drop": -0.0016123164120077638
+    },
+    {
+      "scope": "feature",
+      "name": "percent_bc_gt_75",
+      "n_features": 1,
+      "concordance": 0.6895133774167234,
+      "concordance_drop": -5.657225229671603e-05,
+      "auc_12m": 0.7007654579682977,
+      "auc_12m_drop": -0.0007403461622584873
+    },
+    {
+      "scope": "feature",
+      "name": "num_il_tl",
+      "n_features": 1,
+      "concordance": 0.6896022889030524,
+      "concordance_drop": -0.00014548373862577346,
+      "auc_12m": 0.6997781931828059,
+      "auc_12m_drop": 0.0002469186232333387
+    },
+    {
+      "scope": "feature",
+      "name": "tot_cur_bal",
+      "n_features": 1,
+      "concordance": 0.6896643471224992,
+      "concordance_drop": -0.000207541958072599,
+      "auc_12m": 0.7004989605117125,
+      "auc_12m_drop": -0.000473848705673241
+    }
+  ],
+  "groups": [
+    {
+      "scope": "group",
+      "name": "account_counts",
+      "n_features": 14,
+      "features": "open_acc, total_acc, num_sats, num_actv_bc_tl, num_actv_rev_tl, num_bc_sats, num_bc_tl, num_il_tl, num_op_rev_tl, num_rev_accts, num_rev_tl_bal_gt_0, mort_acc, acc_open_past_24mths, num_tl_op_past_12m",
+      "not_model_features": "",
+      "concordance": 0.6702105196223026,
+      "concordance_drop": 0.019246285542124042,
+      "auc_12m": 0.6777326870714979,
+      "auc_12m_drop": 0.022292424734541294
+    },
+    {
+      "scope": "group",
+      "name": "utilisation",
+      "n_features": 7,
+      "features": "revol_util, bc_util, percent_bc_gt_75, bc_open_to_buy, revol_bal, total_rev_hi_lim, total_bc_limit",
+      "not_model_features": "",
+      "concordance": 0.670334110869752,
+      "concordance_drop": 0.019122694294674614,
+      "auc_12m": 0.6820891278336951,
+      "auc_12m_drop": 0.017935983972344083
+    },
+    {
+      "scope": "group",
+      "name": "application_descriptors",
+      "n_features": 5,
+      "features": "purpose, home_ownership, verification_status, application_type, initial_list_status",
+      "not_model_features": "",
+      "concordance": 0.6738833261061472,
+      "concordance_drop": 0.015573479058279438,
+      "auc_12m": 0.6848764708727582,
+      "auc_12m_drop": 0.015148640933281055
+    },
+    {
+      "scope": "group",
+      "name": "recency_months",
+      "n_features": 11,
+      "features": "mths_since_last_delinq, mths_since_last_record, mths_since_last_major_derog, mths_since_recent_bc, mths_since_recent_bc_dlq, mths_since_recent_inq, mths_since_recent_revol_delinq, mo_sin_old_il_acct, mo_sin_old_rev_tl_op, mo_sin_rcnt_rev_tl_op, mo_sin_rcnt_tl",
+      "not_model_features": "",
+      "concordance": 0.6753353491512967,
+      "concordance_drop": 0.014121456013129974,
+      "auc_12m": 0.6791751386546712,
+      "auc_12m_drop": 0.02084997315136805
+    },
+    {
+      "scope": "group",
+      "name": "income_and_burden",
+      "n_features": 2,
+      "features": "annual_inc, dti",
+      "not_model_features": "",
+      "concordance": 0.6796600780581767,
+      "concordance_drop": 0.009796727106249903,
+      "auc_12m": 0.6872602447190068,
+      "auc_12m_drop": 0.012764867087032394
+    },
+    {
+      "scope": "group",
+      "name": "inquiries",
+      "n_features": 2,
+      "features": "inq_last_6mths, mths_since_recent_inq",
+      "not_model_features": "",
+      "concordance": 0.6837933118890436,
+      "concordance_drop": 0.005663493275383069,
+      "auc_12m": 0.6916785190179858,
+      "auc_12m_drop": 0.008346592788053386
+    },
+    {
+      "scope": "group",
+      "name": "loan_structure",
+      "n_features": 1,
+      "features": "loan_amnt",
+      "not_model_features": "installment",
+      "concordance": 0.6845847582695346,
+      "concordance_drop": 0.004872046894892068,
+      "auc_12m": 0.693001580974817,
+      "auc_12m_drop": 0.007023530831222202
+    },
+    {
+      "scope": "group",
+      "name": "delinquency_and_public_record",
+      "n_features": 12,
+      "features": "delinq_2yrs, delinq_amnt, pub_rec, pub_rec_bankruptcies, tax_liens, acc_now_delinq, chargeoff_within_12_mths, collections_12_mths_ex_med, num_accts_ever_120_pd, num_tl_30dpd, num_tl_90g_dpd_24m, pct_tl_nvr_dlq",
+      "not_model_features": "",
+      "concordance": 0.6854154056244476,
+      "concordance_drop": 0.0040413995399790625,
+      "auc_12m": 0.6969834904199526,
+      "auc_12m_drop": 0.003041621386086657
+    },
+    {
+      "scope": "group",
+      "name": "balances_and_limits",
+      "n_features": 6,
+      "features": "tot_cur_bal, avg_cur_bal, tot_hi_cred_lim, total_bal_ex_mort, total_il_high_credit_limit, tot_coll_amt",
+      "not_model_features": "",
+      "concordance": 0.6861975298568054,
+      "concordance_drop": 0.0032592753076212677,
+      "auc_12m": 0.6962190113470501,
+      "auc_12m_drop": 0.0038061004589891034
+    }
+  ],
+  "provenance": {
+    "stage": "03e_feature_ablation",
+    "created_at": "2026-09-25T19:20:06+00:00",
+    "code": {
+      "commit": "9a082beaf95981c8c845b6054f1ccd9177a888bf",
+      "code_dirty": true,
+      "dirty_files": [
+        "onfig/config.yaml",
+        "scripts/01_build_labels.py",
+        "scripts/02_train_models.py",
+        "scripts/02r_recompute_metrics.py",
+        "scripts/02s_save_cleaning_values.py",
+        "scripts/03_explain.py",
+        "scripts/03b_bootstrap_segments.py",
+        "scripts/03d_explainer_validation.py",
+        "scripts/03e_feature_ablation.py",
+        "scripts/03f_settings_comparison.py",
+        "scripts/04_reject_inference.py",
+        "scripts/05_report.py",
+        "scripts/06_score_upload.py",
+        "scripts/check_provenance.py",
+        "scripts/inspect_data.py",
+        "src/creditsurv/batch.py",
+        "src/creditsurv/cleaning.py",
+        "src/creditsurv/config.py",
+        "src/creditsurv/derive.py",
+        "src/creditsurv/drift.py",
+        "src/creditsurv/eda.py",
+        "src/creditsurv/environment.py",
+        "src/creditsurv/explain/adverse_action.py",
+        "src/creditsurv/explain/compare.py",
+        "src/creditsurv/explain/naive_shap.py",
+        "src/creditsurv/explain/parallel.py",
+        "src/creditsurv/explain/segments.py",
+        "src/creditsurv/explain/survshap.py",
+        "src/creditsurv/features/build.py",
+        "src/creditsurv/io/loaders.py",
+        "src/creditsurv/models/cox.py",
+        "src/creditsurv/models/evaluate.py",
+        "src/creditsurv/pipeline.py",
+        "src/creditsurv/reporting/figures.py",
+        "src/creditsurv/runner.py",
+        "src/creditsurv/schema_match.py",
+        "config/models.yaml",
+        "scripts/07_model_registry.py",
+        "scripts/wsl_launch.sh",
+        "src/creditsurv.egg-info/",
+        "src/creditsurv/registry.py",
+        "src/creditsurv/run_checks.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4649,
+      "mtime": "2026-09-25T17:53:09+00:00",
+      "sha256": "b78081a55953ef2c8085b5037bdb3c3f8cf693f578fffe592b72eea509817c49"
+    },
+    "args": {
+      "model_tag": "full_applicant_nogeo",
+      "sample": 50000,
+      "groups_only": false
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      },
+      "model": {
+        "path": "outputs/models/02_models_full_applicant_nogeo.pkl",
+        "exists": true,
+        "bytes": 44589779,
+        "mtime": "2026-09-24T20:25:00+00:00",
+        "sha256": "406e440d52b5d136d9d0585e158f697b3e2b9dd9e2ec2e7657c3488b75fb86ec"
+      }
+    },
+    "outputs": {
+      "result": {
+        "path": "outputs/tables/03e_ablation_full_applicant_nogeo.json",
+        "exists": false
+      },
+      "features": {
+        "path": "outputs/tables/03e_ablation_features_full_applicant_nogeo.csv",
+        "exists": true,
+        "bytes": 6965,
+        "mtime": "2026-09-25T19:20:06+00:00",
+        "sha256": "2184a6c5235d9f6bd392bc437d8ea1c992874efcb3b85d8a5ac7568381ae21d8"
+      },
+      "groups": {
+        "path": "outputs/tables/03e_ablation_groups_full_applicant_nogeo.csv",
+        "exists": true,
+        "bytes": 2111,
+        "mtime": "2026-09-25T19:20:06+00:00",
+        "sha256": "10ab894a26890a400b2d5f058eca04425efa069f64c558ada3f90a141a711d82"
+      }
+    },
+    "environment": {
+      "python": "3.14.4",
+      "packages": {
+        "numpy": "2.5.3",
+        "pandas": "2.3.3",
+        "pyarrow": "25.0.1",
+        "scikit-learn": "1.9.1",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.18.1"
+      }
+    }
+  }
+}

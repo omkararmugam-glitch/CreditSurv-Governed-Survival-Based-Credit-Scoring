@@ -12,6 +12,7 @@ paths:
   models_dir: outputs/models
   figures_dir: outputs/figures
   tables_dir: outputs/tables
+  registry: config/models.yaml   # which models may score for lending decisions
 
 ingest:
   chunksize: 250000
@@ -82,7 +83,9 @@ cleaning:
 # 11.8% to 8.9% (rejected: 25.9%). Shown on the dashboard and written into
 # every run_summary.csv.
 decision:
-  model_tag: full            # trained bundle used for scoring
+  # Must be approved in config/models.yaml, or scoring refuses. "full" is
+  # deprecated (FINDINGS 7c defect, uses addr_state); see FINDINGS 7l.
+  model_tag: full_applicant_nogeo
   model: discrete_hazard     # or cox
   horizon_months: 36
   reject_at_or_above: 0.30
@@ -96,3 +99,11 @@ decision:
   chunk_rows: 50000           # rows per block; peak memory follows this, not file size
   drift_min_rows: 500         # below this, drift is reported as 'too few rows'
   min_feature_coverage: 0.60
+  # Share of rejections where a non-disclosable feature was a top adverse driver,
+  # above which the dashboard asks for fair-lending review (FINDINGS 7l).
+  fair_lending_review_share: 0.05
+  # Phase 2 (reasons, notices) starts by itself for at most this many rejected
+  # applicants; above it the dashboard asks: all, a random sample, or skip.
+  explain_confirm_above: 1000
+  explain_seconds_each: 2.1        # for the ETA shown before Phase 2 starts
+  phase2_checkpoint_seconds: 20    # how often reasons are written while it runs

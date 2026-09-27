@@ -15,7 +15,11 @@ scoring applicants   ``model.predict_survival`` -- the fitted
 explaining           :func:`creditsurv.explain.survshap.explain_survshap`,
                      or :func:`...tree_shap.explain_tree_shap` for bulk runs
                      (``decision.bulk_explainer``; see FINDINGS section 7)
-notices              :func:`...adverse_action.build_adverse_action_notice`
+notices              :func:`...adverse_action.build_adverse_action_notice`,
+                     split into the applicant notice and the internal
+                     review record
+model approval       :func:`creditsurv.registry.assess`
+checks               :func:`creditsurv.run_checks.verify_run`
 traceability         :func:`creditsurv.provenance.build_stamp`
 ===================  ====================================================
 
@@ -33,6 +37,21 @@ columns is scored with those features left missing, and the coverage is reported
 on screen and in every output file. Missing one of :data:`CORE_REQUIRED` stops
 the run instead.
 
+**Only an approved model decides.** The model must be approved in the registry
+(``config/models.yaml``); otherwise the run is refused, or -- when the caller
+overrides explicitly -- finishes stamped "not for lending decisions" in every
+output and on every notice.
+
+**Applicant notices and internal records never share a file.** Notices go to
+``adverse_action_notices.zip``; fair-lending flags, drivers and attributions go to
+``internal/``. Every notice screens itself, and the run reads the zip back from
+disk and screens it again before it is marked finished.
+
+**A run checks itself before it is finished.** :mod:`creditsurv.run_checks` reads
+the written files back and verifies counts, decisions, risk ordering, reasons,
+disclosability, notice content and approval. A blocking failure withholds the
+notices and leaves no ``provenance.json``, so the run is never loaded as finished.
+
 **Cleaning values belong to the model.** They are fitted once on its whole training
 split and saved with it; scoring reads them and never fits. A model without them
 refuses to score and says which command adds them, rather than quietly learning
@@ -44,6 +63,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import shutil
 import time
 import zipfile
 from dataclasses import dataclass, field
@@ -63,7 +83,8 @@ from .cleaning import (CleaningPolicy, CleaningReport, CleaningValues, clean,
 # does not fit cleaning values.
 from .config import Config
 from .environment import policy_block_message, policy_blocked_exception
-from .explain.adverse_action import MAX_PRINCIPAL_REASONS, build_adverse_action_notice
+from .explain.adverse_action import (MAX_PRINCIPAL_REASONS, NOT_FOR_LENDING,
+                                     build_adverse_action_notice)
 from .explain.parallel import (Ledger, explain_rows_parallel, keep_awake,
                                suggest_workers)
 from .explain.survshap import explain_survshap
@@ -72,12 +93,17 @@ from .features.build import build_design_matrix
 from .pipeline import (load_feature_frame, load_model_bundle,
                        resolve_data_source)
 from .provenance import PROJECT_ROOT, build_stamp, file_fingerprint
+from .registry import assess
+from .run_checks import (NO_REASON_NOTE, REASONS_PENDING, blocking_failures,
+                         verify_run, write_checks)
 
 __all__ = ["CORE_REQUIRED", "PROVISIONAL_REQUIRED", "ALIASES", "OUTPUT_NAMES", "BatchError",
            "ValidationReport", "ScoringContext", "BatchResult", "read_upload",
            "validate", "load_context", "prepare", "profile", "run_batch",
            "load_result", "bundle_zip", "iter_chunks", "Aggregates", "CAP_NOTE",
-           "choose_explainer", "RUNS_DIR"]
+           "choose_explainer", "RUNS_DIR", "INTERNAL_DIR", "INTERNAL_FLAGS",
+           "INTERNAL_RECORDS", "NO_REASON_NOTE", "score_file", "explain_run",
+           "PHASE2_DIR", "REASONS_PENDING"]
 
 RUNS_DIR = PROJECT_ROOT / "outputs" / "runs"
 
@@ -151,9 +177,32 @@ OUTPUT_NAMES: tuple[str, ...] = (
     "data_drift.csv", "data_profile_missing.csv", "data_profile_numeric.csv",
     "data_profile_categories.csv", "data_profile_outliers.csv",
     "validation_report.json", "provenance.json", "aggregates.json",
+    "validation_checks.csv",
 )
-"""Every file a finished run writes. Used to recognise a completed run directory
+"""Every file a finished run writes at the top of its folder. Used to recognise a completed run directory
 and to refuse writing a second run into one."""
+
+INTERNAL_DIR = "internal"
+"""Sub-folder for material the applicant is never given: fair-lending flags,
+non-disclosable drivers, attributions, model details."""
+INTERNAL_FLAGS = "internal_review_flags.csv"
+INTERNAL_RECORDS = "internal_review_records.jsonl"
+INTERNAL_README = (
+    "INTERNAL -- NEVER SEND ANY FILE IN THIS FOLDER TO AN APPLICANT.\n\n"
+    f"{INTERNAL_FLAGS}: one row per explained rejected applicant -- fair-lending "
+    "flag,\nnon-disclosable drivers, the feature and attribution behind each stated "
+    "reason.\n"
+    f"{INTERNAL_RECORDS}: the full internal review record per applicant, as JSON.\n\n"
+    "Applicant notices are in ../adverse_action_notices.zip and contain none of "
+    "this.\n")
+INTERNAL_COLUMNS: tuple[str, ...] = (
+    "applicant_id", "notice_status", "fair_lending_flag", "non_disclosable_drivers",
+    "top_driver_not_disclosable", "top_driver", "top_driver_attribution",
+    "predicted_default_probability", "horizon_months", "model",
+    *[f"reason_{i}_{kind}" for i in range(1, MAX_PRINCIPAL_REASONS + 1)
+      for kind in ("feature", "attribution")],
+    "direction_consistent")
+"""Columns of internal_review_flags.csv, fixed so an empty block still writes them."""
 
 PROVISIONAL_REQUIRED: tuple[str, ...] = (
     "loan_amnt", "installment", "annual_inc", "dti", "open_acc", "revol_bal",
@@ -214,11 +263,14 @@ class BatchError(RuntimeError):
     """A failure with a plain-language message for the page and a technical detail
     for the collapsible section."""
 
-    def __init__(self, message: str, detail: str = "", fix: str = ""):
+    def __init__(self, message: str, detail: str = "", fix: str = "",
+                 run_dir: Path | None = None):
         super().__init__(message)
         self.message = message
         self.detail = detail or message
         self.fix = fix
+        self.run_dir = run_dir
+        """Set when a run wrote files before failing, e.g. validation_checks.csv."""
 
 
 @dataclass
@@ -506,6 +558,33 @@ def available_models(models_dir: Path) -> list[str]:
                   for p in Path(models_dir).glob("02_models_*.pkl"))
 
 
+def context_key(cfg: Config, model_tag: str | None = None,
+                model_name: str | None = None) -> tuple:
+    """Everything :func:`load_context` depends on, as a hashable key.
+
+    A cache of loaded models (the dashboard's) is keyed on this, so it is reused
+    across uploads and page interactions yet can never serve a stale model: replace
+    the bundle, its cleaning values or its training data, or change the background
+    settings, and the key changes.
+    """
+    d = cfg.decision
+    tag = model_tag or d.model_tag
+    models = Path(cfg.paths.models_dir)
+
+    def stamp(p: Path):
+        try:
+            st = Path(p).stat()
+            return (str(p), st.st_mtime_ns, st.st_size)
+        except OSError:
+            return (str(p), None, None)
+
+    return (tag, model_name or d.model, stamp(models / f"02_models_{tag}.pkl"),
+            stamp(models / f"02_cleaning_values_{tag}.json"),
+            stamp(Path(cfg.paths.data_dir) / "accepted_labeled.parquet"),
+            int(d.background_rows), int(cfg.explain.seed),
+            tuple(cfg.model.eval_horizons_months))
+
+
 def load_context(cfg: Config, model_tag: str | None = None,
                  model_name: str | None = None) -> ScoringContext:
     """Load a trained bundle and a background sample from its *training* split.
@@ -682,6 +761,9 @@ class Aggregates:
     n_approved: int = 0
     n_rejected: int = 0
     n_rejected_explained: int = 0
+    n_reasons_pending: int = 0
+    """Rejected rows Phase 2 has not reached yet: marked "reasons pending", which is
+    a state, not a gap -- unlike rows a cap, a sample or a skip left without."""
     pd_sum: float = 0.0
     pd_bins: int = 40
     pd_hist: list = field(default_factory=lambda: [0] * 40)
@@ -689,6 +771,26 @@ class Aggregates:
     reason_counts: dict = field(default_factory=dict)
     rows_out_of_range: int = 0
     group_column: str = ""
+    n_fair_lending_flagged: int = 0
+    """Explained rejections where a non-disclosable feature was among the strongest
+    adverse drivers (the notice's own flag: top 2 x MAX_PRINCIPAL_REASONS)."""
+    n_top_driver_not_disclosable: int = 0
+    """...and where it was the single strongest one."""
+    flag_features: dict = field(default_factory=dict)
+
+    def add_fair_lending(self, records) -> None:
+        for rec in records:
+            if rec.flagged:
+                self.n_fair_lending_flagged += 1
+                for f in rec.fair_lending_flags:
+                    self.flag_features[f] = self.flag_features.get(f, 0) + 1
+            if rec.top_driver_not_disclosable:
+                self.n_top_driver_not_disclosable += 1
+
+    @property
+    def fair_lending_share(self) -> float:
+        return (self.n_fair_lending_flagged / self.n_rejected_explained
+                if self.n_rejected_explained else 0.0)
 
     @property
     def mean_pd(self) -> float:
@@ -696,7 +798,8 @@ class Aggregates:
 
     @property
     def n_rejected_without_reasons(self) -> int:
-        return self.n_rejected - self.n_rejected_explained
+        return max(0, self.n_rejected - self.n_rejected_explained
+                   - self.n_reasons_pending)
 
     def add(self, pd_h, decision, group, flags, reasons) -> None:
         self.n_rows += len(pd_h)
@@ -741,11 +844,15 @@ class Aggregates:
         return {"n_rows": self.n_rows, "n_approved": self.n_approved,
                 "n_rejected": self.n_rejected,
                 "n_rejected_explained": self.n_rejected_explained,
+                "n_reasons_pending": self.n_reasons_pending,
                 "pd_sum": self.pd_sum, "pd_bins": self.pd_bins,
                 "pd_hist": list(self.pd_hist), "by_group": self.by_group,
                 "reason_counts": self.reason_counts,
                 "rows_out_of_range": self.rows_out_of_range,
-                "group_column": self.group_column}
+                "group_column": self.group_column,
+                "n_fair_lending_flagged": self.n_fair_lending_flagged,
+                "n_top_driver_not_disclosable": self.n_top_driver_not_disclosable,
+                "flag_features": self.flag_features}
 
     @classmethod
     def from_dict(cls, payload: dict) -> "Aggregates":
@@ -768,11 +875,24 @@ class BatchResult:
     drift: object = None
     aggregates: Aggregates | None = None
     notices: list = field(default_factory=list)
+    checks: pd.DataFrame = field(default_factory=pd.DataFrame)
+    """validation_checks.csv: one row per post-run check, PASS/FAIL/OVERRIDDEN."""
 
 
 def _slug(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", Path(name).stem)[:40] or "upload"
 
+
+RISK_DECIMALS = 4
+"""Decimals of predicted risk written to the decision files. The decision is taken
+on the rounded value, so a file never contradicts its own threshold."""
+
+REJECTED_REASON_COLUMNS: tuple[str, ...] = (
+    "reason_4", "reason_4_feature",
+    *[f"reason_{i}_attribution" for i in range(1, 5)],
+    "fair_lending_flag", "direction_consistent", "notice_file")
+"""Columns rejected_applicants.csv carries beyond scored_applicants.csv; empty in
+Phase 1 and filled in by Phase 2."""
 
 CAP_NOTE = "reasons not generated: run stopped before this row"
 """What a rejected applicant without reasons is marked with. Every rejected
@@ -838,37 +958,85 @@ def choose_explainer(ctx: ScoringContext, requested: str | None = None) -> str:
     return "survshap"
 
 
-def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
-              model_name: str | None = None, threshold: float | None = None,
-              max_explained: int | None = None, runs_dir: Path | None = None,
-              run_dir: Path | None = None, chunk_rows: int | None = None,
-              explainer: str | None = None, mapping: dict | None = None,
-              progress=None, ctx: ScoringContext | None = None) -> BatchResult:
-    """Score an upload end to end, in row blocks, and write this run's files.
+def _save_frame(frame: pd.DataFrame, path: Path, writer=None, meta: dict | None = None):
+    """Append a design-matrix block to a parquet file, exactly restorable.
 
-    The file is read, cleaned, scored and explained ``chunk_rows`` rows at a time
-    and the outputs are appended as it goes, so peak memory is set by the block
-    size rather than the file size.
+    Categorical columns are stored as text and their category lists recorded in
+    ``meta``, so :func:`_load_frame` rebuilds the very dtypes the model scored --
+    which is what makes Phase 2's reasons the reasons for Phase 1's decisions.
+    Returns the writer, to be passed back for the next block and closed at the end.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
-    Explanations are spent on **rejected** applicants only, in file order, against
-    one running budget, so the cap behaves exactly as it would in a single pass:
-    approved rows never consume it, and a rejected row past it is marked with
-    :data:`CAP_NOTE` rather than left blank.
+    out = frame.copy()
+    if meta is not None and "columns" not in meta:
+        meta["columns"] = [str(c) for c in frame.columns]
+        meta["dtypes"] = {str(c): str(t) for c, t in frame.dtypes.items()}
+        meta["categories"] = {str(c): [str(v) for v in frame[c].cat.categories]
+                              for c in frame.columns
+                              if isinstance(frame[c].dtype, pd.CategoricalDtype)}
+    for c in out.columns:
+        if isinstance(out[c].dtype, pd.CategoricalDtype):
+            out[c] = out[c].astype("string")
+    table = pa.Table.from_pandas(out, preserve_index=True,
+                                 schema=writer.schema if writer is not None else None)
+    if writer is None:
+        writer = pq.ParquetWriter(path, table.schema)
+    writer.write_table(table)
+    return writer
 
-    Scores, decisions and cleaning flags do not depend on ``chunk_rows``. The stated
-    reasons can: SurvSHAP(t) draws coalitions per call, so two applicants explained
-    in the same block or in different ones may swap two near-tied reasons -- the
-    per-applicant instability FINDINGS already records. The block size is written
-    into the run summary and the provenance stamp for that reason.
+
+def _load_frame(path: Path, meta: dict, rows=None) -> pd.DataFrame:
+    frame = pd.read_parquet(path)
+    if rows is not None:
+        frame = frame.loc[frame.index.intersection(pd.Index(rows))]
+    for c, levels in meta.get("categories", {}).items():
+        frame[c] = pd.Categorical(frame[c].astype("string"), categories=levels)
+    return frame[[c for c in meta["columns"] if c in frame.columns]]
+
+
+PHASE2_DIR = "phase2"
+"""What Phase 1 leaves for Phase 2 inside the run folder: the plan, the rejected
+applicants' model inputs exactly as scored, the explainer's background sample, and
+-- as Phase 2 runs -- its progress, results and the per-applicant ledger."""
+
+
+def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None,
+               model_name: str | None = None, threshold: float | None = None,
+               runs_dir: Path | None = None, run_dir: Path | None = None,
+               chunk_rows: int | None = None, explainer: str | None = None,
+               mapping: dict | None = None, progress=None,
+               ctx: ScoringContext | None = None,
+               allow_unapproved_model: bool = False) -> BatchResult:
+    """**Phase 1**: check, clean, score, decide and drift-check a file, and write it.
+
+    The one function that turns an applicant file into decisions. The dashboard
+    (inline and in the background), ``06_score_upload.py`` and :func:`run_batch` all
+    call it; ``tests/test_two_phase.py`` fails if anything else scores applicants.
+
+    It explains nobody. Every rejected row is written with ``explained = "reasons
+    pending"`` and the model inputs Phase 2 needs are saved beside it, so decisions
+    for a file of any size are on disk -- and checked -- in the time it takes to
+    read, clean and score it. :func:`creditsurv.phase2.explain_run` (Phase 2) then
+    fills the reasons in.
+
+    The file is read, cleaned and scored ``chunk_rows`` rows at a time and written
+    as it goes, so peak memory is set by the block size, not the file size. Scores,
+    decisions and cleaning flags do not depend on ``chunk_rows``.
 
     ``progress(step, state, message)`` is called with ``state`` in
     ``{"running", "done", "failed"}`` for steps ``check``, ``clean``, ``profile``,
-    ``score``, ``explain``, ``files``.
+    ``score``, ``files``.
+
+    The model must be approved in the registry. ``allow_unapproved_model=True`` is
+    the explicit override: the run proceeds, and every output says it is not for
+    lending decisions. The same stamp applies to a threshold other than the
+    published ``decision.reject_at_or_above``.
     """
     started = time.perf_counter()
     d = cfg.decision
     threshold = d.reject_at_or_above if threshold is None else float(threshold)
-    max_explained = d.max_explained if max_explained is None else int(max_explained)
     chunk_rows = int(chunk_rows or getattr(d, "chunk_rows", 50_000))
     runs_dir = Path(runs_dir or RUNS_DIR)
 
@@ -907,23 +1075,11 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     scored_path = stamp_dir / "scored_applicants.csv"
     approved_path = stamp_dir / "approved_applicants.csv"
     rejected_path = stamp_dir / "rejected_applicants.csv"
-
-    # A cap of 0 (the default) means no cap: every rejected applicant is explained.
-    budget = None if max_explained <= 0 else max_explained
-    workers = int(getattr(d, "explain_workers", 0)) or None
-    explained_running = 0
-    n_rejected_total = 0
-    # Explained, but every adverse driver was either undisclosable or had no
-    # Regulation B wording: a different gap from "not explained", and counted
-    # separately rather than looking like a blank.
-    no_disclosable = 0
+    phase2_dir = stamp_dir / PHASE2_DIR
     step_seconds: dict[str, float] = {}
 
     def timed(step: str, seconds: float) -> None:
         step_seconds[step] = round(step_seconds.get(step, 0.0) + seconds, 2)
-
-    # A long explanation pass is no use if the machine sleeps halfway through it.
-    awake, awake_note = keep_awake(True)
 
     say("check", "running")
     t_step = time.perf_counter()
@@ -949,9 +1105,32 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     except BatchError as exc:
         fail("check", exc)
     explainer_name = choose_explainer(ctx, explainer)
-    workers = 1 if explainer_name == "treeshap" else workers
-    ledger = (None if explainer_name == "treeshap"
-              else Ledger.load(stamp_dir / "explained_rows.jsonl"))
+
+    # Only an approved model makes lending decisions. Checked on every run, against
+    # the model file actually loaded, so a stale tag or a swapped file cannot pass.
+    approval = assess(ctx.model_tag, cfg, model_path=ctx.model_path,
+                      spec_features=ctx.spec.all_columns, explainer=explainer_name,
+                      nsamples=d.explain_nsamples, n_background=d.explain_n_background)
+    if not approval.approved and not allow_unapproved_model:
+        fail("check", BatchError(
+            f"The '{ctx.model_tag}' model is not approved for lending decisions "
+            f"(registry status: {approval.status}).",
+            approval.message(),
+            f"Score with an approved model ({Path(cfg.paths.registry).as_posix()}), "
+            f"or override explicitly -- the outputs are then stamped not for lending "
+            f"decisions. To see what approval needs: python "
+            f"scripts/07_model_registry.py rules --model-tag {ctx.model_tag}"))
+    published = float(d.reject_at_or_above)
+    threshold_published = bool(np.isclose(threshold, published, rtol=0, atol=1e-12))
+    not_for_lending = []
+    if not approval.approved:
+        not_for_lending.append(f"model {ctx.model_tag} is {approval.label}")
+    if not threshold_published:
+        not_for_lending.append(f"threshold {threshold:g} is not the published "
+                               f"{published:g}")
+    for_lending = not not_for_lending
+    feature_screen = tuple(ctx.spec.all_columns) + tuple(
+        (ctx.bundle.get("artefacts") or {}).get("gbm_columns") or ())
     timed("check_file", time.perf_counter() - t_step)
     say("check", "done",
         f"{len(report.present)} of {report.n_features} model features present, "
@@ -970,10 +1149,10 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     agg = Aggregates()
     agg.group_column = "purpose" if "purpose" in ctx.spec.categorical else ""
     preview, preview_kept = [], 0
-    notices = []
+    design_writer, design_meta = None, {}
     row_offset = 0
     n_blocks = 0
-    said_clean = said_score = said_explain = said_profile = False
+    said_clean = said_score = said_profile = False
 
     def blocks():
         yield first
@@ -1006,12 +1185,13 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
             say("clean", "done", "; ".join(clean_report.plain_english()[:2]))
 
         # Every block feeds the sample, so the profile and the drift check
-        # describe the whole file rather than its opening rows. That means
-        # profiling finishes with the last block, not the first.
+        # describe the whole file rather than its opening rows.
         if not said_profile:
             said_profile = True
             say("profile", "running")
+        t_step = time.perf_counter()
         reservoir.add_block(block)
+        timed("profile_and_drift", time.perf_counter() - t_step)
 
         # -------------------------------------------------------- score ----
         if not said_score:
@@ -1025,100 +1205,40 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
                 "The file's values may be far outside anything the model was "
                 "trained on. Check the Details, or try another model."))
         timed("score", time.perf_counter() - t_step)
-        pd12 = 1.0 - surv[:, k12]
-        pd_h = 1.0 - surv[:, k_h]
+        # The decision is taken on exactly the risk that is written. Deciding on
+        # the unrounded value let an applicant at 0.29996 be approved while the file
+        # showed 0.3, which the published rule rejects: 145 of 1.3M rows on a 450 MB
+        # file, caught by decisions_match_threshold (FINDINGS 7m).
+        pd12 = np.round(1.0 - surv[:, k12], RISK_DECIMALS)
+        pd_h = np.round(1.0 - surv[:, k_h], RISK_DECIMALS)
         decision = np.where(pd_h >= threshold, "reject", "approve")
         ids = (block[report.id_column].astype(str).to_numpy()
                if report.id_column and report.id_column in block.columns
                else np.array([f"APP-{row_offset + i + 1:06d}"
                               for i in range(len(block))]))
-
-        # ------------------------------------------------------ explain ----
-        if not said_explain:
-            say("explain", "running")
-        t_step = time.perf_counter()
-        n_rejected_total += int((decision == "reject").sum())
+        row_ids = np.arange(row_offset + 1, row_offset + len(block) + 1)
         reject_pos = np.flatnonzero(decision == "reject")
-        # Every rejected applicant is explained. A cap exists only as an explicit
-        # override for a quick look; at its default of 0 it does nothing.
-        explain_pos = reject_pos if budget is None else reject_pos[:max(budget, 0)]
-        reasons, fair_flags, notice_file = {}, {}, {}
-        explained_note = pd.Series("not applicable (approved)",
-                                   index=range(len(block)))
-        explained_note.iloc[reject_pos] = CAP_NOTE
-        if len(explain_pos):
-            try:
-                if explainer_name == "treeshap":
-                    expl = explain_tree_shap(
-                        ctx.model, X.iloc[explain_pos],
-                        horizon_months=float(d.horizon_months), times=ctx.times)
-                else:
-                    # Seeded per applicant from the applicant's own id, so a notice
-                    # does not depend on batch membership, worker count or whether
-                    # an earlier run was interrupted (FINDINGS 7.0b).
-                    expl = explain_rows_parallel(
-                        ctx.model, X.iloc[explain_pos], ctx.background, ctx.times,
-                        row_ids=[str(ids[p]) for p in explain_pos],
-                        nsamples=d.explain_nsamples,
-                        n_background=d.explain_n_background, seed=cfg.explain.seed,
-                        workers=(1 if len(explain_pos) < PARALLEL_MIN_ROWS
-                                 else workers),
-                        ledger=ledger,
-                        progress=lambda done, total: say(
-                            "explain", "running",
-                            f"{explained_running + done:,} of {n_rejected_total or total:,} "
-                            f"rejected applicants explained"))
-                if report.optional_missing or report.required_missing:
-                    expl = _without_features(
-                        expl, set(report.optional_missing) | set(report.required_missing))
-                for j, pos in enumerate(explain_pos):
-                    notice = build_adverse_action_notice(
-                        expl, obs=j, applicant_id=str(ids[pos]),
-                        horizon_months=int(d.horizon_months),
-                        model_name=f"{ctx.model_name} ({ctx.model_tag}), "
-                                   f"{explainer_name}")
-                    reasons[int(pos)] = notice.reasons
-                    if not notice.reasons:
-                        no_disclosable += 1
-                    fair_flags[int(pos)] = ", ".join(notice.fair_lending_flags)
-                    fname = f"notice_{_slug(str(ids[pos]))}.txt"
-                    notices.append((fname, notice.render()))
-                    notice_file[int(pos)] = fname
-                    explained_note.iloc[pos] = "explained"
-                explained_running += len(explain_pos)
-                if budget is not None:
-                    budget -= len(explain_pos)
-            except Exception as exc:
-                # The scores are in hand by now, so a blocked SHAP is a different
-                # failure from a file that is too large, and needs different advice.
-                fix = (policy_block_message() if policy_blocked_exception(exc)
-                       else "Try a smaller file, or lower decision.max_explained in "
-                            "config/config.yaml.")
-                fail("explain", BatchError(
-                    "The applicants were scored, but the reasons could not be "
-                    "generated.", repr(exc), fix))
-
-        timed("explain", time.perf_counter() - t_step)
 
         # -------------------------------------------------------- write ----
         t_step = time.perf_counter()
+        explained_note = np.where(decision == "reject", REASONS_PENDING,
+                                  "not applicable (approved)")
         front = pd.DataFrame({
-            "row_id": np.arange(row_offset + 1, row_offset + len(block) + 1),
+            "row_id": row_ids,
             "applicant_id": ids,
-            "pd_12m": np.round(pd12, 4),
-            pd_col: np.round(pd_h, 4),
+            "pd_12m": pd12,
+            pd_col: pd_h,
             "decision": decision,
             "threshold": threshold,
             "model_tag": ctx.model_tag,
             "model": ctx.model_name,
-            "explained": explained_note.to_numpy(),
-            # Which explainer produced this row's reasons, so an output file always
-            # says what its reasons are based on.
-            "explainer": np.where(explained_note.to_numpy() == "explained",
-                                  explainer_name, ""),
+            "model_status": approval.label,
+            "for_lending_decisions": for_lending,
+            "explained": explained_note,
+            # Which explainer produced this row's reasons; Phase 2 fills it in.
+            "explainer": "",
         })
-        positions = list(range(len(block)))
-        for name, values in _reason_columns(reasons, positions, 3).items():
+        for name, values in _reason_columns({}, list(range(len(block))), 3).items():
             front[name] = values
         front["features_present"] = len(report.present)
         front["features_missing"] = len(report.missing_optional)
@@ -1129,23 +1249,11 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
 
         group = (block[agg.group_column]
                  if agg.group_column and agg.group_column in block.columns else None)
-        agg.add(pd_h, decision, group, flags, reasons)
+        agg.add(pd_h, decision, group, flags, {})
 
         rejected = scored[scored["decision"] == "reject"].copy()
-        rej_pos = list(rejected.index)
-        rejected[f"reason_{MAX_PRINCIPAL_REASONS}"] = [
-            reasons[p][3].reason if p in reasons and len(reasons[p]) > 3 else ""
-            for p in rej_pos]
-        for i in range(1, MAX_PRINCIPAL_REASONS + 1):
-            rejected[f"reason_{i}_attribution"] = [
-                round(reasons[p][i - 1].attribution, 6)
-                if p in reasons and len(reasons[p]) >= i else ""
-                for p in rej_pos]
-        rejected["fair_lending_flag"] = [fair_flags.get(p, "") for p in rej_pos]
-        rejected["direction_consistent"] = [
-            all(r.direction_consistent for r in reasons[p]) if p in reasons else ""
-            for p in rej_pos]
-        rejected["notice_file"] = [notice_file.get(p, "") for p in rej_pos]
+        for col in REJECTED_REASON_COLUMNS:
+            rejected[col] = ""
         approved = scored[scored["decision"] == "approve"]
 
         ensure_dir()
@@ -1154,23 +1262,28 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
             header = not path.exists()
             frame.to_csv(path, index=False, mode="w" if header else "a",
                          header=header)
+        # What Phase 2 explains: these rows' model inputs exactly as scored, keyed
+        # by row_id, so the reasons are the reasons for these decisions.
+        if len(reject_pos):
+            phase2_dir.mkdir(parents=True, exist_ok=True)
+            design = X.iloc[reject_pos].copy()
+            design.index = pd.Index(row_ids[reject_pos], name="row_id")
+            design.insert(0, "__applicant_id", ids[reject_pos])
+            design_writer = _save_frame(design, phase2_dir / "rejected_design.parquet",
+                                        design_writer, design_meta)
         if preview_kept < PREVIEW_ROWS:
             preview.append(scored.head(PREVIEW_ROWS - preview_kept))
             preview_kept += min(len(scored), PREVIEW_ROWS - preview_kept)
 
         timed("write_rows", time.perf_counter() - t_step)
         row_offset += len(block)
-        said_score = said_explain = True
+        said_score = True
         del X, flags, scored, rejected, approved, block
+    if design_writer is not None:
+        design_writer.close()
 
+    agg.n_reasons_pending = agg.n_rejected
     say("score", "done", f"{agg.n_approved:,} approved, {agg.n_rejected:,} rejected")
-    cap_note = ""
-    if agg.n_rejected_without_reasons:
-        cap_note = (f"; {agg.n_rejected_without_reasons:,} rejected applicant(s) have "
-                    f"NO reasons -- re-run to continue from there")
-    say("explain", "done",
-        f"{agg.n_rejected_explained:,} of {agg.n_rejected:,} rejected applicants "
-        f"explained{cap_note}")
 
     # ----------------------------------------------------------- profile --
     t_step = time.perf_counter()
@@ -1188,7 +1301,6 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
            if drift_result.status in ("large", "moderate") else "")
         + (f", on a random sample of {len(profile_frame):,} of {agg.n_rows:,} rows"
            if len(profile_frame) < agg.n_rows else ""))
-
     timed("profile_and_drift", time.perf_counter() - t_step)
 
     # ----------------------------------------------------------- outputs --
@@ -1202,15 +1314,17 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     if isinstance(data, (str, Path)) and Path(data).resolve() == input_copy.resolve():
         pass                                  # already saved here by the caller
     elif isinstance(data, (str, Path)):
-        input_copy.write_bytes(Path(data).read_bytes())
+        shutil.copyfile(data, input_copy)     # streamed; never the whole file in memory
     elif isinstance(data, bytes):
         input_copy.write_bytes(data)
-    if notices:
-        zpath = stamp_dir / "adverse_action_notices.zip"
-        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as zf:
-            for fname, text in notices:
-                zf.writestr(fname, text)
-        files["adverse_action_notices.zip"] = zpath
+    internal_dir = stamp_dir / INTERNAL_DIR
+    internal_dir.mkdir(parents=True, exist_ok=True)
+    (internal_dir / "README.txt").write_text(INTERNAL_README, encoding="utf-8")
+    pd.DataFrame(columns=list(INTERNAL_COLUMNS)).to_csv(internal_dir / INTERNAL_FLAGS,
+                                                        index=False)
+    (internal_dir / INTERNAL_RECORDS).write_text("", encoding="utf-8")
+    files[f"{INTERNAL_DIR}/{INTERNAL_FLAGS}"] = internal_dir / INTERNAL_FLAGS
+    files[f"{INTERNAL_DIR}/{INTERNAL_RECORDS}"] = internal_dir / INTERNAL_RECORDS
 
     for name, frame in (("data_profile_missing.csv", prof["missing"]),
                         ("data_profile_numeric.csv", prof["numeric"]),
@@ -1224,8 +1338,25 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     files["data_drift.csv"] = stamp_dir / "data_drift.csv"
     drift_result.table.to_csv(files["data_drift.csv"], index=False)
 
-    elapsed = time.perf_counter() - started
+    # ------------------------------------------------------------ checks --
+    # Read back from disk, not from memory: the files are what leaves this run.
+    say("files", "running", "checking the written outputs")
+    checks = verify_run(
+        stamp_dir, n_rows_read=agg.n_rows, threshold=threshold,
+        published_threshold=published, horizon_months=int(d.horizon_months),
+        feature_names=feature_screen, model_approved=approval.approved,
+        model_label=approval.message(), allow_unapproved=allow_unapproved_model,
+        cap_note=CAP_NOTE, chunk_rows=chunk_rows,
+        notices_zip=stamp_dir / "__no_notices_yet__.zip")
+    files["validation_checks.csv"] = write_checks(
+        checks, stamp_dir / "validation_checks.csv")
+    blocking = blocking_failures(checks)
+    review_share = float(getattr(d, "fair_lending_review_share", 0.05))
+    confirm_above = int(getattr(d, "explain_confirm_above", 1000))
+
     model_fp = file_fingerprint(ctx.model_path)
+    phase2_state = "not needed" if agg.n_rejected == 0 else (
+        "awaiting choice" if agg.n_rejected > confirm_above else "not started")
     summary = {
         "run_id": stamp_dir.name,
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -1237,22 +1368,50 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "n_rejected": agg.n_rejected,
         "approval_rate": round(agg.n_approved / agg.n_rows, 4) if agg.n_rows else 0.0,
         f"mean_pd_{int(d.horizon_months)}m": round(agg.mean_pd, 4),
+        "run_status": ("failed_checks" if blocking else
+                       "finished" if agg.n_rejected == 0 else "decisions_ready"),
+        "phase2_state": phase2_state,
+        "phase2_mode": "",
+        "explain_confirm_above": confirm_above,
+        "for_lending_decisions": for_lending and not blocking,
+        "not_for_lending_reasons": "; ".join(
+            not_for_lending + ([f"{len(blocking)} blocking check(s) failed"]
+                               if blocking else [])),
         "model_tag": ctx.model_tag,
         "model": ctx.model_name,
+        "model_registry_status": approval.status,
+        "model_approved": approval.approved,
+        "model_approval_problems": " ".join(approval.problems),
+        "model_override": bool(allow_unapproved_model and not approval.approved),
         "model_sha256": model_fp.get("sha256"),
         "model_trained_on": str(ctx.data_source),
         "threshold": threshold,
+        "published_threshold": published,
+        "threshold_is_published": threshold_published,
         "horizon_months": int(d.horizon_months),
         "explainer": explainer_name,
         "explain_nsamples": (d.explain_nsamples if explainer_name == "survshap"
                              else None),
         "explain_n_background": (d.explain_n_background if explainer_name == "survshap"
                                  else None),
-        "max_explained": max_explained,
-        "n_explained": agg.n_rejected_explained,
-        "n_rejected_without_reasons": agg.n_rejected_without_reasons,
-        "n_explained_without_disclosable_reason": no_disclosable,
-        "n_notices": len(notices),
+        "max_explained": None,
+        "n_explained": 0,
+        "n_reasons_pending": agg.n_rejected,
+        "n_rejected_without_reasons": 0,
+        "n_explained_without_disclosable_reason": 0,
+        "n_pending_manual_review": 0,
+        "n_notices": 0,
+        # Fair-lending monitoring, on every run; filled in by Phase 2.
+        "n_fair_lending_flagged": 0,
+        "fair_lending_flag_share": 0.0,
+        "n_top_driver_not_disclosable": 0,
+        "fair_lending_flag_features": "",
+        "fair_lending_review_share": review_share,
+        "fair_lending_review_required": False,
+        "validation_checks_passed": not blocking,
+        "n_checks_failed": sum(c.status == "FAIL" for c in checks),
+        "n_checks_overridden": sum(c.status == "OVERRIDDEN" for c in checks),
+        "failed_checks": "; ".join(c.name for c in checks if c.status == "FAIL"),
         "features_expected": report.n_features,
         "features_present": len(report.present),
         "features_missing": len(report.missing_optional),
@@ -1279,28 +1438,82 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         "drift_features_moderate": drift_result.n_moderate,
         "drift_features_large": drift_result.n_large,
         "explain_seeded": explainer_name == "survshap",
-        "explain_workers": (workers or suggest_workers(max(n_rejected_total, 1))
-                            if explainer_name == "survshap" else 1),
-        "sleep_blocked": bool(awake),
+        "explain_workers": None,
         "seconds_by_step": step_seconds,
         "profiled_rows": len(profile_frame),
         "profile_sampling": "uniform random across the whole file",
         "chunk_rows": chunk_rows,
         "blocks": n_blocks,
-        "seconds_total": round(elapsed, 1),
+        "phase1_seconds": None,
+        "phase2_seconds": None,
+        "seconds_total": None,
     }
     files["run_summary.csv"] = stamp_dir / "run_summary.csv"
-    # The per-step timings are finished first, so run_summary.csv, provenance.json
-    # and the returned result all carry the same numbers.
+
+    # Everything Phase 2 needs, so it never re-reads the upload or the training
+    # data: a Phase 2 process starts in the time it takes to load the model.
+    if agg.n_rejected:
+        bg_meta: dict = {}
+        _save_frame(ctx.background, phase2_dir / "background.parquet",
+                    meta=bg_meta).close()
+        plan = {
+            "run_id": stamp_dir.name,
+            "model_tag": ctx.model_tag, "model_name": ctx.model_name,
+            "model_path": str(Path(ctx.model_path).resolve()),
+            "model_sha256": model_fp.get("sha256"),
+            "notice_model_label": f"{ctx.model_name} ({ctx.model_tag}), "
+                                  f"{explainer_name}",
+            "explainer": explainer_name, "nsamples": int(d.explain_nsamples),
+            "n_background": int(d.explain_n_background),
+            "seed": int(cfg.explain.seed), "times": [float(t) for t in ctx.times],
+            "horizon_months": int(d.horizon_months),
+            "threshold": threshold, "published_threshold": published,
+            "for_lending_phase1": for_lending,
+            "absent_features": sorted(set(report.optional_missing)
+                                      | set(report.required_missing)),
+            "feature_screen": list(feature_screen),
+            "n_rejected": agg.n_rejected,
+            "explain_workers": int(getattr(d, "explain_workers", 0)) or None,
+            "chunk_rows": chunk_rows,
+            "allow_unapproved_model": bool(allow_unapproved_model),
+            "model_approved": approval.approved,
+            "model_label": approval.message(),
+            "design": design_meta, "background": bg_meta,
+        }
+        (phase2_dir / "plan.json").write_text(json.dumps(plan, indent=2),
+                                              encoding="utf-8")
+        (phase2_dir / "status.json").write_text(json.dumps({
+            "state": phase2_state, "mode": "", "n_rejected": agg.n_rejected,
+            "target": None, "done": 0, "confirm_above": confirm_above},
+            indent=2), encoding="utf-8")
+
     timed("write_outputs", time.perf_counter() - t_step)
     step_seconds["total"] = round(time.perf_counter() - started, 2)
     summary["seconds_by_step"] = dict(step_seconds)
-    summary["seconds_total"] = step_seconds["total"]
+    summary["phase1_seconds"] = summary["seconds_total"] = step_seconds["total"]
     pd.DataFrame([summary]).to_csv(files["run_summary.csv"], index=False)
     (stamp_dir / "validation_report.json").write_text(
         json.dumps(report.to_dict(), indent=2), encoding="utf-8")
     (stamp_dir / "aggregates.json").write_text(
         json.dumps(agg.to_dict(), indent=2), encoding="utf-8")
+
+    if blocking:
+        # Not finished: no provenance.json is written, so neither the page nor
+        # load_result can present this run as complete, and Phase 2 refuses it.
+        lines = [f"{c.name}: {c.detail}" for c in blocking]
+        (stamp_dir / "RUN_FAILED_CHECKS.txt").write_text(
+            "This run failed its own checks and is NOT finished. Do not use its "
+            "outputs.\nNo applicant notices will be produced for it.\n\n"
+            + "\n".join(lines) + "\n", encoding="utf-8")
+        say("files", "failed", f"{len(blocking)} check(s) failed")
+        raise BatchError(
+            f"The run failed {len(blocking)} of its own checks, so its outputs are "
+            f"not finished and no notices will be produced: "
+            + ", ".join(c.name for c in blocking) + ".",
+            "\n".join(lines),
+            "Nothing from this run may be used. The checks are in "
+            "validation_checks.csv in the run folder; the failure is a defect to fix, "
+            "not a file to correct.", run_dir=stamp_dir)
 
     stamp = build_stamp(
         stage="batch_score",
@@ -1309,18 +1522,20 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
         outputs=dict(files),
         config_path=PROJECT_ROOT / "config" / "config.yaml",
         args={"threshold": threshold, "model_tag": ctx.model_tag,
-              "model": ctx.model_name, "max_explained": max_explained,
-              "explainer": explainer_name,
+              "model": ctx.model_name, "explainer": explainer_name,
               "chunk_rows": chunk_rows, "cleaning_policy": ctx.policy.version,
-              "cleaning_values_fitted_rows": ctx.clean_values.fitted_rows})
+              "cleaning_values_fitted_rows": ctx.clean_values.fitted_rows,
+              "model_registry_status": approval.status,
+              "allow_unapproved_model": bool(allow_unapproved_model),
+              "for_lending_decisions": summary["for_lending_decisions"]})
     (stamp_dir / "provenance.json").write_text(
         json.dumps({"provenance": stamp, "summary": summary,
                     "cleaning": clean_report.to_dict()}, indent=2),
         encoding="utf-8")
-    keep_awake(False)
     say("files", "done", f"{len(files)} files written to {stamp_dir.name}")
+    from .wsl_sync import copy_back_soon
+    copy_back_soon()                  # in the WSL copy only: decisions to Windows
 
-    elapsed = step_seconds["total"]
     preview_frame = (pd.concat(preview, ignore_index=True) if preview
                      else pd.DataFrame())
     approved_preview = rejected_preview = preview_frame
@@ -1330,8 +1545,39 @@ def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
     return BatchResult(
         run_dir=stamp_dir, scored=preview_frame, approved=approved_preview,
         rejected=rejected_preview, summary=summary, report=report, files=files,
-        seconds=elapsed, clean_report=clean_report, profile=prof,
-        drift=drift_result, aggregates=agg, notices=notices)
+        seconds=step_seconds["total"], clean_report=clean_report, profile=prof,
+        drift=drift_result, aggregates=agg, notices=[],
+        checks=pd.read_csv(files["validation_checks.csv"]))
+
+
+def run_batch(data, filename: str, cfg: Config, *, model_tag: str | None = None,
+              model_name: str | None = None, threshold: float | None = None,
+              max_explained: int | None = None, runs_dir: Path | None = None,
+              run_dir: Path | None = None, chunk_rows: int | None = None,
+              explainer: str | None = None, mapping: dict | None = None,
+              progress=None, ctx: ScoringContext | None = None,
+              allow_unapproved_model: bool = False) -> BatchResult:
+    """Both phases, one after the other, in this process: decisions, then reasons.
+
+    Nothing of its own: :func:`score_file` then :func:`creditsurv.phase2.explain_run`,
+    with the loaded model handed across so it is not loaded twice. A positive
+    ``max_explained`` is the explicit cap (the first N rejected rows, in file
+    order); the rest are marked and the run is stamped not for lending decisions.
+    """
+    from .phase2 import explain_run
+
+    ctx = ctx or load_context(cfg, model_tag, model_name)
+    result = score_file(data, filename, cfg, threshold=threshold, runs_dir=runs_dir,
+                        run_dir=run_dir, chunk_rows=chunk_rows, explainer=explainer,
+                        mapping=mapping, progress=progress, ctx=ctx,
+                        allow_unapproved_model=allow_unapproved_model)
+    if not result.summary["n_rejected"]:
+        return result
+    cap = cfg.decision.max_explained if max_explained is None else int(max_explained)
+    phase2 = explain_run(result.run_dir, cfg, mode="all",
+                         limit=cap if cap and cap > 0 else None, model=ctx.model,
+                         model_path=ctx.model_path, progress=progress)
+    return phase2.merged_into(result)
 
 
 def load_result(run_dir: Path) -> BatchResult:
@@ -1387,7 +1633,11 @@ def load_result(run_dir: Path) -> BatchResult:
     zpath = run_dir / "adverse_action_notices.zip"
     if zpath.exists():
         with zipfile.ZipFile(zpath) as zf:
-            notices = [(n, zf.read(n).decode("utf-8", "replace")) for n in zf.namelist()]
+            names = zf.namelist()
+            # Up to 5,000 read into memory; beyond that the zip is the place to read
+            # them, and loading them all would make opening a large run slow.
+            if len(names) <= 5_000:
+                notices = [(n, zf.read(n).decode("utf-8", "replace")) for n in names]
 
     agg_path = run_dir / "aggregates.json"
     aggregates = (Aggregates.from_dict(json.loads(agg_path.read_text(encoding="utf-8")))
@@ -1400,8 +1650,11 @@ def load_result(run_dir: Path) -> BatchResult:
         approved=scored[scored["decision"] == "approve"] if len(scored) else scored,
         rejected=scored[scored["decision"] == "reject"] if len(scored) else scored,
         summary=summary, report=report, aggregates=aggregates,
-        files={name: run_dir / name for name in OUTPUT_NAMES
+        files={name: run_dir / name for name in
+               OUTPUT_NAMES + (f"{INTERNAL_DIR}/{INTERNAL_FLAGS}",
+                               f"{INTERNAL_DIR}/{INTERNAL_RECORDS}")
                if (run_dir / name).exists()},
+        checks=read("validation_checks.csv"),
         seconds=float(summary.get("seconds_total", 0.0)),
         clean_report=clean_report,
         profile={"overview": {"rows": int(summary.get("n_rows", len(scored))),
@@ -1418,10 +1671,30 @@ def load_result(run_dir: Path) -> BatchResult:
 
 
 def bundle_zip(result: BatchResult) -> bytes:
-    """Every output file of one run, as a single in-memory ZIP."""
+    """Every output file of one run, as a single in-memory ZIP, for the operator.
+
+    The internal records keep their ``internal/`` folder inside the bundle, so they
+    stay separate from the applicant notices there too.
+    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(result.run_dir.iterdir()):
             if path.is_file():
                 zf.write(path, path.name)
+        internal = result.run_dir / INTERNAL_DIR
+        if internal.is_dir():
+            for path in sorted(internal.iterdir()):
+                if path.is_file():
+                    zf.write(path, f"{INTERNAL_DIR}/{path.name}")
     return buf.getvalue()
+
+
+def __getattr__(name: str):
+    """Phase 2 lives in :mod:`creditsurv.phase2` and is exported from here too, so a
+    caller importing the scoring API gets both phases from one place. Resolved on
+    first use -- the same function object, not a wrapper -- because phase2 imports
+    this module."""
+    if name == "explain_run":
+        from .phase2 import explain_run
+        return explain_run
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

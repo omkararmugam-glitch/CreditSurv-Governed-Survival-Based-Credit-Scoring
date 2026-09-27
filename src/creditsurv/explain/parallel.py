@@ -38,8 +38,8 @@ import pandas as pd
 
 from .survshap import SurvShapExplanation, explain_survshap, summarise_background
 
-__all__ = ["row_seed", "explain_rows", "explain_rows_parallel", "Ledger",
-           "keep_awake", "suggest_workers"]
+__all__ = ["row_seed", "explain_rows", "explain_rows_parallel", "iter_explanations",
+           "assemble", "Ledger", "keep_awake", "suggest_workers"]
 
 
 def row_seed(base_seed: int, row_id: object) -> int:
@@ -143,8 +143,25 @@ def _explain_one(model, row: pd.DataFrame, background: pd.DataFrame,
 _WORKER: dict = {}
 
 
+def _threads_each(n_workers: int) -> int:
+    """Cores per worker. LightGBM's predict uses every core by default, so N workers
+    each asking for all of them oversubscribe the machine: measured on this one
+    (32 cores, 5 workers), throughput fell to 7.5 applicants a minute against 27 in
+    a single process. A fair share each fixes it."""
+    return max(1, (os.cpu_count() or 2) // max(1, n_workers))
+
+
+def _limit_threads(n: int):
+    try:
+        from threadpoolctl import threadpool_limits
+        return threadpool_limits(limits=int(n))
+    except Exception:                                  # pragma: no cover
+        return None
+
+
 def _init_worker(payload: dict) -> None:                # pragma: no cover - subprocess
     _WORKER.update(payload)
+    _WORKER["_limit"] = _limit_threads(payload.get("threads", 1))
 
 
 def _work(task: tuple) -> tuple:                        # pragma: no cover - subprocess
@@ -178,6 +195,94 @@ def explain_rows(model, X: pd.DataFrame, background: pd.DataFrame,
     return _assemble(model, X, phi, times, bg, nsamples)
 
 
+def iter_explanations(model, X: pd.DataFrame, bg: pd.DataFrame, times: np.ndarray, *,
+                      row_ids=None, nsamples: int = 600, seed: int = 20260921,
+                      workers: int | None = None, ledger: Ledger | None = None):
+    """Yield ``(position, row_id, phi)`` for every row of ``X``, as each finishes.
+
+    ``bg`` is the **already summarised** background (:func:`summarise_background`).
+    Rows the ledger already holds are yielded first, without recomputation. The rest
+    are computed on ``workers`` processes -- one pool for the whole call, fed a
+    bounded window of rows at a time, so a call over 300,000 rows neither queues
+    300,000 tasks in memory nor pays pool start-up per batch -- and each is written
+    to the ledger as it arrives. This is what lets Phase 2 of a scoring run report
+    progress and fill in reasons while it runs rather than only at the end.
+
+    Output is identical to :func:`explain_rows`: each row's seed comes from its own
+    identifier, so where a row is computed changes nothing.
+    """
+    ids = list(row_ids if row_ids is not None else X.index)
+    times = np.atleast_1d(np.asarray(times, dtype=float))
+    todo = []
+    for i, row_id in enumerate(ids):
+        if ledger is not None and ledger.has(row_id):
+            yield i, row_id, np.asarray(ledger.done[str(row_id)]["phi"], dtype=float)
+        else:
+            todo.append(i)
+    if not todo:
+        return
+
+    def serial(positions):
+        for i in positions:
+            phi = _explain_one(model, X.iloc[[i]], bg, times, nsamples=nsamples,
+                               seed=row_seed(seed, ids[i]))
+            if ledger is not None:
+                ledger.append({"row_id": ids[i], "phi": phi.tolist()})
+            yield i, ids[i], phi
+
+    n_workers = workers or suggest_workers(len(todo))
+    if n_workers <= 1:
+        yield from serial(todo)
+        return
+
+    from collections import deque
+    from concurrent.futures import ProcessPoolExecutor
+
+    payload = {"model": model, "background": bg, "times": times,
+               "nsamples": nsamples, "seed": seed, "columns": list(X.columns),
+               "dtypes": X.dtypes.to_dict(), "threads": _threads_each(n_workers)}
+    finished: set[int] = set()
+    # While the workers compute, this process only assembles one applicant at a
+    # time: one thread is plenty, and more would compete with the workers.
+    limiter = _limit_threads(1)
+    try:
+        with ProcessPoolExecutor(max_workers=n_workers, initializer=_init_worker,
+                                 initargs=(payload,)) as pool:
+            window: deque = deque()
+            pending = iter(todo)
+            for i in pending:                              # fill the window
+                window.append(pool.submit(_work, (i, ids[i], X.iloc[i].to_list())))
+                if len(window) >= n_workers * 4:
+                    break
+            while window:
+                position, row_id, row_phi = window.popleft().result()
+                nxt = next(pending, None)
+                if nxt is not None:
+                    window.append(pool.submit(_work, (nxt, ids[nxt],
+                                                      X.iloc[nxt].to_list())))
+                if ledger is not None:
+                    ledger.append({"row_id": row_id, "phi": row_phi.tolist()})
+                finished.add(position)
+                yield position, row_id, row_phi
+    except GeneratorExit:
+        raise
+    except Exception as exc:
+        # Workers are an optimisation, not a requirement. If the pool cannot start
+        # or a worker dies -- a process-spawn environment that cannot re-import the
+        # parent, a machine out of memory -- the rest is done in this process. The
+        # answer is the same either way, because each row is seeded from its own
+        # id, so falling back costs time and nothing else.
+        warnings.warn(f"parallel explanation unavailable ({exc!r}); continuing in one "
+                      f"process", RuntimeWarning, stacklevel=2)
+        if limiter is not None:
+            limiter.restore_original_limits()
+            limiter = None
+        yield from serial([i for i in todo if i not in finished])
+    finally:
+        if limiter is not None:
+            limiter.restore_original_limits()
+
+
 def explain_rows_parallel(model, X: pd.DataFrame, background: pd.DataFrame,
                           times: np.ndarray, *, row_ids=None, nsamples: int = 600,
                           n_background: int = 100, seed: int = 20260921,
@@ -187,65 +292,38 @@ def explain_rows_parallel(model, X: pd.DataFrame, background: pd.DataFrame,
 
     Identical output is not a hope here: each row's seed comes from its identifier,
     so the arithmetic in a worker is the arithmetic a single process would do.
+    Collects :func:`iter_explanations`, the one engine every caller shares.
     """
-    ids = list(row_ids if row_ids is not None else X.index)
     bg = summarise_background(background, n=n_background, seed=seed)
     times = np.atleast_1d(np.asarray(times, dtype=float))
     phi = np.zeros((len(X), len(X.columns), len(times)), dtype=float)
-
-    todo = []
-    for i, row_id in enumerate(ids):
-        if ledger is not None and ledger.has(row_id):
-            phi[i] = np.asarray(ledger.done[str(row_id)]["phi"], dtype=float)
-        else:
-            todo.append((i, row_id, X.iloc[i].to_list()))
-    done_already = len(X) - len(todo)
-    if progress and done_already:
-        progress(done_already, len(X))
-    if not todo:
-        return _assemble(model, X, phi, times, bg, nsamples)
-
-    n_workers = workers or suggest_workers(len(todo))
-    if n_workers <= 1:
-        return explain_rows(model, X, background, times, row_ids=ids,
-                            nsamples=nsamples, n_background=n_background, seed=seed,
-                            ledger=ledger, progress=progress)
-
-    from concurrent.futures import ProcessPoolExecutor
-
-    payload = {"model": model, "background": bg, "times": times,
-               "nsamples": nsamples, "seed": seed, "columns": list(X.columns),
-               "dtypes": X.dtypes.to_dict()}
-    completed = done_already
-    try:
-        with ProcessPoolExecutor(max_workers=n_workers, initializer=_init_worker,
-                                 initargs=(payload,)) as pool:
-            for position, row_id, row_phi in pool.map(_work, todo, chunksize=1):
-                phi[position] = row_phi
-                if ledger is not None:
-                    ledger.append({"row_id": row_id, "phi": row_phi.tolist()})
-                completed += 1
-                if progress:
-                    progress(completed, len(X))
-    except Exception as exc:
-        # Workers are an optimisation, not a requirement. If the pool cannot start
-        # or a worker dies -- a process-spawn environment that cannot re-import the
-        # parent, a machine out of memory -- the work is done in this process
-        # instead. The answer is the same either way, because each row is seeded
-        # from its own id, so falling back costs time and nothing else.
-        warnings.warn(f"parallel explanation unavailable ({exc!r}); continuing in one "
-                      f"process", RuntimeWarning, stacklevel=2)
-        return explain_rows(model, X, background, times, row_ids=ids,
-                            nsamples=nsamples, n_background=n_background, seed=seed,
-                            ledger=ledger, progress=progress)
+    for done, (position, _, row_phi) in enumerate(
+            iter_explanations(model, X, bg, times, row_ids=row_ids, nsamples=nsamples,
+                              seed=seed, workers=workers, ledger=ledger), start=1):
+        phi[position] = row_phi
+        if progress:
+            progress(done, len(X))
     return _assemble(model, X, phi, times, bg, nsamples)
 
 
+def assemble(model, X: pd.DataFrame, phi: np.ndarray, times: np.ndarray,
+             bg: pd.DataFrame, nsamples: int, base: np.ndarray | None = None
+             ) -> SurvShapExplanation:
+    """An explanation object from attributions computed by :func:`iter_explanations`.
+
+    ``base`` -- the background's mean survival -- is the same for every applicant;
+    a caller assembling one applicant at a time passes it in rather than paying
+    for it per applicant."""
+    return _assemble(model, X, phi, times, bg, nsamples, base=base)
+
+
 def _assemble(model, X: pd.DataFrame, phi: np.ndarray, times: np.ndarray,
-              bg: pd.DataFrame, nsamples: int) -> SurvShapExplanation:
+              bg: pd.DataFrame, nsamples: int,
+              base: np.ndarray | None = None) -> SurvShapExplanation:
     times = np.atleast_1d(np.asarray(times, dtype=float))
     prediction = model.predict_survival(X, times)
-    base = model.predict_survival(bg, times).mean(axis=0)
+    if base is None:
+        base = model.predict_survival(bg, times).mean(axis=0)
     return SurvShapExplanation(
         phi=phi, times=times, base=base, prediction=prediction,
         feature_names=tuple(X.columns), feature_values=X.copy(),

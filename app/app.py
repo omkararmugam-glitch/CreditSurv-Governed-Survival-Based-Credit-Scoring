@@ -6,9 +6,11 @@ A thin layer over the existing scripts: it runs them only through
 modelling code, never passes ``--overwrite`` unless the user ticks it, and every
 stage still stamps its own provenance.
 
-Launch from the project root:
+Launch from the project root. On a machine where Smart App Control blocks lightgbm
+and shap, serve it from WSL instead (README, "Running the UI"):
 
-    .venv\\Scripts\\python.exe -m streamlit run app/app.py
+    powershell -ExecutionPolicy Bypass -File .\\run_linux.ps1
+    .venv\\Scripts\\python.exe -m streamlit run app/app.py     # elsewhere
 """
 
 from __future__ import annotations
@@ -32,6 +34,13 @@ st.set_page_config(page_title="creditsurv", layout="wide")
 # results still work, so this warns and continues rather than stopping the app.
 from creditsurv.environment import blocked_imports, policy_block_message  # noqa: E402
 
+# In the WSL copy, keep up with edits made on Windows even when no page is open:
+# a watcher thread (once per server process) syncs and restarts when that is safe.
+# Anywhere else it does nothing.
+from creditsurv.wsl_sync import start_watcher  # noqa: E402
+
+start_watcher(ROOT)
+
 _blocked = blocked_imports()
 if _blocked:
     st.error(policy_block_message(_blocked), icon=":material/gpp_bad:")
@@ -47,6 +56,8 @@ st.navigation({
     "Advanced": [
         st.Page(str(VIEWS / "overview.py"), title="Overview", icon=":material/monitoring:"),
         st.Page(str(VIEWS / "run.py"), title="Run pipeline", icon=":material/play_arrow:"),
+        st.Page(str(VIEWS / "model_registry.py"), title="Model registry",
+                icon=":material/verified:"),
         st.Page(str(VIEWS / "results.py"), title="Results viewer", icon=":material/table:"),
         st.Page(str(VIEWS / "findings.py"), title="FINDINGS", icon=":material/science:"),
     ],

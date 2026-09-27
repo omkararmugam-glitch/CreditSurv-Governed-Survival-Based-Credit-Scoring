@@ -37,6 +37,7 @@ a second per borrower at the defaults here.
 
 from __future__ import annotations
 
+import os
 import warnings
 from dataclasses import dataclass, field
 
@@ -226,6 +227,9 @@ def _as_shap_array(raw, n_obs: int, n_features: int, n_outputs: int) -> np.ndarr
     )
 
 
+SHOW_PROGRESS_ENV = "CREDITSURV_SHOW_PROGRESS"
+
+
 def explain_survshap(
     model,
     X: pd.DataFrame,
@@ -235,7 +239,7 @@ def explain_survshap(
     nsamples: int = 256,
     n_background: int = 50,
     seed: int = 20260921,
-    silent: bool = True,
+    silent: bool | None = None,
 ) -> SurvShapExplanation:
     """Compute SurvSHAP(t) attributions for the rows of ``X``.
 
@@ -249,8 +253,17 @@ def explain_survshap(
     background:
         Reference distribution for the "feature is absent" state. Summarised to
         ``n_background`` rows internally.
+    silent:
+        Whether to hide shap's per-applicant progress bar. ``None`` (the default)
+        hides it unless ``CREDITSURV_SHOW_PROGRESS=1`` is set, which the background
+        runner does for the Model registry's evidence jobs so their logs show how
+        far a long run has got. Display only: the attributions are identical
+        either way (tests/test_two_phase.py checks it).
     """
     import shap
+
+    if silent is None:
+        silent = os.environ.get(SHOW_PROGRESS_ENV) != "1"
 
     times = np.atleast_1d(np.asarray(times, dtype=float))
     bg = summarise_background(background, n=n_background, seed=seed)

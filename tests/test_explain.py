@@ -293,7 +293,15 @@ class TestAdverseAction:
         assert any(n.fair_lending_flags for n in notices)
         flagged = next(n for n in notices if n.fair_lending_flags)
         assert "addr_state" in flagged.fair_lending_flags
-        assert "INTERNAL REVIEW FLAG" in flagged.render()
+        # Surfaced in the internal record -- and never in the applicant's notice,
+        # which is where test 1 found it in 166 of 255 notices.
+        assert "FAIR-LENDING REVIEW FLAG" in flagged.render_internal()
+        assert "addr_state" in flagged.render_internal()
+        assert flagged.to_dict()["fair_lending_flags"] == ["addr_state"]
+        applicant = flagged.render()
+        assert "INTERNAL" not in applicant.upper()
+        assert "addr_state" not in applicant
+        assert "fair-lending" not in applicant.lower()
 
     def test_clean_feature_list_is_accepted(self):
         assert_disclosable(["dti", "fico_midpoint", "revol_util"])

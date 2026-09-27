@@ -1,0 +1,10 @@
+scope,name,n_features,features,not_model_features,concordance,concordance_drop,auc_12m,auc_12m_drop
+group,account_counts,14,"open_acc, total_acc, num_sats, num_actv_bc_tl, num_actv_rev_tl, num_bc_sats, num_bc_tl, num_il_tl, num_op_rev_tl, num_rev_accts, num_rev_tl_bal_gt_0, mort_acc, acc_open_past_24mths, num_tl_op_past_12m",,0.6702105196223026,0.019246285542124042,0.6777326870714979,0.022292424734541294
+group,utilisation,7,"revol_util, bc_util, percent_bc_gt_75, bc_open_to_buy, revol_bal, total_rev_hi_lim, total_bc_limit",,0.670334110869752,0.019122694294674614,0.6820891278336951,0.017935983972344083
+group,application_descriptors,5,"purpose, home_ownership, verification_status, application_type, initial_list_status",,0.6738833261061472,0.015573479058279438,0.6848764708727582,0.015148640933281055
+group,recency_months,11,"mths_since_last_delinq, mths_since_last_record, mths_since_last_major_derog, mths_since_recent_bc, mths_since_recent_bc_dlq, mths_since_recent_inq, mths_since_recent_revol_delinq, mo_sin_old_il_acct, mo_sin_old_rev_tl_op, mo_sin_rcnt_rev_tl_op, mo_sin_rcnt_tl",,0.6753353491512967,0.014121456013129974,0.6791751386546712,0.02084997315136805
+group,income_and_burden,2,"annual_inc, dti",,0.6796600780581767,0.009796727106249903,0.6872602447190068,0.012764867087032394
+group,inquiries,2,"inq_last_6mths, mths_since_recent_inq",,0.6837933118890436,0.005663493275383069,0.6916785190179858,0.008346592788053386
+group,loan_structure,1,loan_amnt,installment,0.6845847582695346,0.004872046894892068,0.693001580974817,0.007023530831222202
+group,delinquency_and_public_record,12,"delinq_2yrs, delinq_amnt, pub_rec, pub_rec_bankruptcies, tax_liens, acc_now_delinq, chargeoff_within_12_mths, collections_12_mths_ex_med, num_accts_ever_120_pd, num_tl_30dpd, num_tl_90g_dpd_24m, pct_tl_nvr_dlq",,0.6854154056244476,0.0040413995399790625,0.6969834904199526,0.003041621386086657
+group,balances_and_limits,6,"tot_cur_bal, avg_cur_bal, tot_hi_cred_lim, total_bal_ex_mort, total_il_high_credit_limit, tot_coll_amt",,0.6861975298568054,0.0032592753076212677,0.6962190113470501,0.0038061004589891034

@@ -28,7 +28,11 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from creditsurv.config import load_config  # noqa: E402
-from creditsurv.explain.adverse_action import build_adverse_action_notice  # noqa: E402
+from creditsurv.explain.adverse_action import (  # noqa: E402
+    NOT_FOR_LENDING,
+    build_adverse_action_notice,
+    write_notice_pair,
+)
 from creditsurv.explain.compare import compare_explanations  # noqa: E402
 from creditsurv.explain.naive_shap import explain_naive_shap  # noqa: E402
 from creditsurv.explain.segments import analyse_segment_stability  # noqa: E402
@@ -85,7 +89,8 @@ def main() -> int:
     # have prevented the earlier near-miss, where a variant run was launched with
     # the tag of the settled comparison result.
     refused = guard_outputs(
-        find_existing_outputs([cfg.paths.tables_dir, cfg.paths.figures_dir],
+        find_existing_outputs([cfg.paths.tables_dir, cfg.paths.tables_dir / "internal",
+                               cfg.paths.figures_dir],
                               "03", args.tag),
         args.overwrite, script="03_explain.py")
     if refused:
@@ -266,16 +271,20 @@ def main() -> int:
         if score_col in derived.columns and pd.notna(derived[score_col].iloc[riskiest])
         else None
     )
+    # A research example, never a lending decision: always marked as a specimen.
     notice = build_adverse_action_notice(
         surv, obs=riskiest, horizon_months=int(args.at_month),
-        credit_score=score, model_name=args.model,
+        credit_score=score, model_name=args.model, specimen=NOT_FOR_LENDING,
     )
-    text = notice.render()
-    print(text)
-    notice_path = cfg.paths.tables_dir / f"03_adverse_action_notice_{args.tag}.txt"
-    notice_path.write_text(text, encoding="utf-8")
+    # Two documents, two places: the applicant notice beside the other tables, the
+    # internal record (flags, drivers, attributions) in tables/internal/.
+    notice_path, internal_txt, _ = write_notice_pair(
+        notice, cfg.paths.tables_dir / f"03_adverse_action_notice_{args.tag}.txt",
+        cfg.paths.tables_dir / "internal")
+    print(notice_path.read_text(encoding="utf-8"))
+    print(f"(internal review record -> {internal_txt})")
     write_json(notice.to_dict(),
-               cfg.paths.tables_dir / f"03_adverse_action_{args.tag}.json")
+               cfg.paths.tables_dir / "internal" / f"03_adverse_action_{args.tag}.json")
 
     # ---------------- (c) segment stability ----------------
     print("\n=== (c) explanation stability across segments ===")

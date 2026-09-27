@@ -1,37 +1,69 @@
-"""Score Applicants: upload a CSV, get finished decision files.
+"""Score Applicants: upload a CSV, see decisions in minutes, reasons as they come.
 
-The page is presentation only. Every step is one call into creditsurv.batch,
-which in turn calls the pipeline's own validation, encoding, scoring, SurvSHAP(t)
-and notice code. Nothing here trains anything.
+The page is presentation only. Decisions are creditsurv.batch.score_file (Phase 1);
+reasons and notices are creditsurv.phase2.explain_run (Phase 2), run in the
+background or, for one applicant, on demand. The same two functions serve
+06_score_upload.py and every other caller. Nothing here trains anything.
 """
 
-import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
-from _common import page_header, paths
+from _common import (CONFIG_PATH, cached_context, cached_result, model_statuses,
+                     page_header, paths)
 from _dashboard import render
+from _phase2_view import render_phase2
 from creditsurv.batch import (PROVISIONAL_REQUIRED, RUNS_DIR, BatchError,
-                              available_models, load_context, load_result,
-                              read_upload, run_batch)
-from creditsurv.derive import derive_features, load_costs
-from creditsurv.schema_match import propose_mapping
+                              available_models, read_upload, score_file)
 from creditsurv.config import load_config
+from creditsurv.derive import derive_features, load_costs
+from creditsurv.phase2 import explain_run
+from creditsurv.registry import assess, registry_path
 from creditsurv.runner import LockHeld, effective_state, launch, read_status, tail_log
+from creditsurv.schema_match import propose_mapping
 
-CONFIG = "config/config.yaml"
+CONFIG = str(CONFIG_PATH)
 STEPS = [("check", "Checking file"), ("clean", "Cleaning data"),
          ("profile", "Profiling data"), ("score", "Scoring applicants"),
-         ("explain", "Explaining decisions"), ("files", "Preparing files")]
+         ("files", "Writing and checking decision files")]
 ICON = {"pending": "⚪", "running": "🔵", "done": "🟢", "failed": "🔴"}
 
+
+def show_failed_checks(run_dir) -> None:
+    """A run that failed its own checks wrote validation_checks.csv and nothing that
+    marks it finished; show which checks failed, whichever path ran it."""
+    import pandas as pd
+
+    path = Path(run_dir) / "validation_checks.csv" if run_dir else None
+    if path is None or not path.exists():
+        return
+    checks = pd.read_csv(path)
+    st.error(f"**Run checks: {int((checks['status'] == 'FAIL').sum())} of "
+             f"{len(checks)} FAILED.** The run is not marked finished and no notices "
+             f"will be produced for it.")
+    st.dataframe(checks, hide_index=True, width="stretch")
+
+
+def show_run(run_dir, cfg, tag, model_name) -> None:
+    """The result view for a run whose decisions are on disk, with Phase 2 in it."""
+    result = cached_result(run_dir)
+
+    def explain_one(row_id: int) -> None:
+        ctx = cached_context(result.summary["model_tag"], result.summary["model"])
+        explain_run(run_dir, cfg, only=[row_id], model=ctx.model,
+                    model_path=ctx.model_path, workers=1)
+
+    render(result, cfg, middle=lambda: render_phase2(
+        run_dir, cfg, summary=result.summary, explain_one=explain_one))
+
+
 page_header("Score Applicants",
-            "Upload a file of applicants. Every one is scored by the trained "
-            "survival model, decided against the published threshold, and written "
-            "out as finished CSVs with Regulation B reasons.")
+            "Upload a file of applicants. Decisions come first, in minutes for any file "
+            "size; Regulation B reasons and notices follow, and you can watch them "
+            "arrive.")
 
 cfg = load_config(CONFIG)
 d = cfg.decision
@@ -41,46 +73,84 @@ if not models:
     st.page_link("views/run.py", label="Go to Advanced > Run Pipeline to train one")
     st.stop()
 
+reg_file = registry_path(cfg)
+statuses = model_statuses(CONFIG, tuple(models),
+                          reg_file.stat().st_mtime_ns if reg_file.exists() else 0)
+
 # Settings stay in the sidebar: the main area shows only the drop zone until a
 # file arrives.
 with st.sidebar:
     with st.expander("Options", expanded=False):
         tag = st.selectbox("Model", models,
-                           index=models.index(d.model_tag) if d.model_tag in models else 0)
+                           index=models.index(d.model_tag) if d.model_tag in models else 0,
+                           format_func=lambda m: f"{m} — {statuses[m]}")
         model_name = st.selectbox("Type", ["discrete_hazard", "cox"], index=0)
         threshold = st.slider(f"Reject at {d.horizon_months}-month default probability",
                               0.05, 0.60, float(d.reject_at_or_above), 0.01)
-        max_explained = st.number_input("Rejected applicants explained (~2.7s each)",
-                                        0, 2000, int(d.max_explained), 10)
         force_bg = st.checkbox(
             "Always run in the background", value=False,
             help=f"Uploads of {d.background_above_mb:.0f} MB or more always do. A "
-                 f"background run survives leaving or refreshing this page, but "
-                 f"reloads the model from scratch (20-40s).")
-        st.caption(f"Defaults come from `decision:` in {CONFIG}.")
+                 f"background run survives leaving or refreshing this page.")
+        st.caption(f"Defaults come from `decision:` in config/config.yaml. Phase 2 "
+                   f"asks first above {d.explain_confirm_above:,} rejected applicants.")
+
+# Only an approved model decides. Anything else needs an explicit override, and
+# the run is then stamped "not for lending decisions" in every output.
+approval = assess(tag, cfg)
+allow_unapproved = False
+if not approval.approved:
+    st.error(f"**Model `{tag}` is not approved for lending decisions** (registry "
+             f"status: {approval.status}). {' '.join(approval.problems)}",
+             icon=":material/gpp_bad:")
+    allow_unapproved = st.checkbox(
+        "Override: score with this unapproved model anyway. Every output and notice "
+        "will be stamped NOT FOR LENDING DECISIONS.", value=False)
+    if not allow_unapproved:
+        st.caption("Pick an approved model under Options, or approve this one: "
+                   f"`python scripts/07_model_registry.py rules --model-tag {tag}`.")
+if abs(threshold - float(d.reject_at_or_above)) > 1e-12:
+    st.warning(f"The threshold {threshold:.0%} is not the published "
+               f"{d.reject_at_or_above:.0%}; this run will be stamped not for lending "
+               f"decisions.")
 
 up = st.file_uploader("Upload applicant dataset (CSV)", type=["csv", "txt"],
                       accept_multiple_files=False)
 if up is None:
     st.caption(f"Decision rule in force: reject when the predicted "
                f"{d.horizon_months}-month default probability is "
-               f"{threshold:.0%} or higher. Model: {tag} ({model_name}).")
+               f"{threshold:.0%} or higher. Model: {tag} ({model_name}), "
+               f"{approval.label}.")
+    # A run is on disk whether or not this browser session saw it finish: open it.
+    finished = sorted((p for p in RUNS_DIR.glob("*") if (p / "provenance.json").exists()),
+                      reverse=True)[:15] if RUNS_DIR.exists() else []
+    if finished:
+        with st.expander("Open a previous run"):
+            pick = st.selectbox("Run", ["—"] + [p.name for p in finished],
+                                key="open_run_pick")
+            if pick != "—":
+                st.session_state["open_run"] = str(RUNS_DIR / pick)
+    if st.session_state.get("open_run"):
+        show_run(Path(st.session_state["open_run"]), cfg, tag, model_name)
+    st.stop()
+st.session_state.pop("open_run", None)
+if not approval.approved and not allow_unapproved:
+    st.error(f"Nothing was scored: `{tag}` is not approved and the override is not "
+             f"ticked.")
     st.stop()
 
 # --------------------------------------------------- confirm what is what --
 # The mapping is proposed, shown and confirmed before any scoring happens. A
 # column is never read as a feature because the software guessed quietly.
-raw = up.getvalue()
 try:
-    ctx_preview = load_context(cfg, tag, model_name)
-    head = read_upload(raw[: 2_000_000], up.name).head(500)
+    ctx = cached_context(tag, model_name)
+    head = read_upload(up.getvalue()[: 2_000_000], up.name).head(500)
 except BatchError as exc:
     st.error(f"**{exc.message}**" + (f"\n\n{exc.fix}" if exc.fix else ""))
     with st.expander("Details"):
         st.code(exc.detail, language="text")
     st.stop()
 
-proposal = propose_mapping(head, ctx_preview.spec, values=ctx_preview.clean_values)
+proposal = propose_mapping(head, ctx.spec, values=ctx.clean_values)
 table = proposal.to_frame()
 st.subheader("Columns")
 if table.empty:
@@ -93,7 +163,7 @@ else:
         column_config={
             "use it": st.column_config.CheckboxColumn(required=True),
             "model feature": st.column_config.SelectboxColumn(
-                options=[""] + list(ctx_preview.spec.all_columns)),
+                options=[""] + list(ctx.spec.all_columns)),
             "confidence": st.column_config.NumberColumn(format="%.2f",
                                                         disabled=True),
             "why": st.column_config.TextColumn(disabled=True),
@@ -121,12 +191,10 @@ else:
                             in proposal.recognised_but_unused.items()))
 
     renamed = dict(chosen)
-    # What the file will still be missing after the confirmed renames, and what of
-    # that can be computed exactly instead of guessed.
     after = head.rename(columns=renamed)
-    wanted = [c for c in ctx_preview.spec.all_columns if c not in after.columns]
+    wanted = [c for c in ctx.spec.all_columns if c not in after.columns]
     _, derived, blocked = derive_features(after, wanted)
-    costs = load_costs(ctx_preview.model_tag, paths().tables_dir)
+    costs = load_costs(ctx.model_tag, paths().tables_dir)
     # The same one-rule-or-the-other choice scoring makes, so the page cannot
     # promise a file will be accepted and then have it refused.
     required = set(costs.required() if costs.measured else PROVISIONAL_REQUIRED)
@@ -154,115 +222,111 @@ else:
 
 mapping = st.session_state.get("confirmed_mapping") or None
 
-# ----------------------------------------------------------------- process --
-size_mb = len(raw) / 1e6
-key = hashlib.sha256(
-    raw + f"{tag}{model_name}{threshold}{max_explained}{sorted((mapping or {}).items())}"
-    .encode()).hexdigest()
+# ----------------------------------------------------------------- Phase 1 --
+# Keyed on Streamlit's own id for the upload, not a hash of its bytes: hashing a
+# 450 MB file on every click was a full pass over it per rerun.
+size_mb = up.size / 1e6
+key = (f"{up.file_id}|{tag}|{model_name}|{threshold}|{allow_unapproved}|"
+       f"{sorted((mapping or {}).items())}")
+runs = st.session_state.setdefault("upload_runs", {})
 background = force_bg or size_mb >= d.background_above_mb
 
-# A background run is a detached process (creditsurv.runner) writing into a run
-# folder this page created, so closing the tab does not stop it and the page only
-# reads what the run wrote.
-job = st.session_state.get("upload_job")
-if job and job["key"] == key and st.session_state.get("batch_key") != key:
-    state = effective_state(Path(job["log_dir"]))
-    if state == "completed":
-        try:
-            st.session_state["batch_result"] = load_result(Path(job["run_dir"]))
-            st.session_state["batch_key"] = key
-        except BatchError as exc:
-            st.error(f"**{exc.message}**")
-            with st.expander("Details"):
-                st.code(exc.detail, language="text")
-            st.stop()
-        st.session_state.pop("upload_job", None)
-    elif state in ("failed", "interrupted"):
-        status = read_status(Path(job["log_dir"]))
-        st.error("**Scoring stopped before it finished.** Nothing was cleaned up or "
-                 "retried; the output folder holds whatever had been written."
-                 + (f" ({status['failed_stage']})" if status.get("failed_stage") else ""))
-        with st.expander("Details", expanded=True):
-            st.code(tail_log(Path(job["log_dir"])) or "(no output)", language="text")
-        if st.button("Clear and try again"):
-            st.session_state.pop("upload_job", None)
-            st.rerun()
-        st.stop()
-    else:
-        st.info(f"Scoring {size_mb:,.0f} MB in the background. You can leave this "
-                f"page; the run keeps going and this view picks it up again.")
-
-        @st.fragment(run_every=2)
-        def watch():
-            now = effective_state(Path(job["log_dir"]))
-            st.markdown(f"**{ICON.get('running' if now in ('running', 'starting') else 'failed' if now in ('failed', 'interrupted') else 'done', '')} {now}**")
-            st.code(tail_log(Path(job["log_dir"]), 60) or "(starting...)", language="text")
-            if now not in ("running", "starting"):
-                st.rerun(scope="app")
-
-        watch()
-        st.stop()
-
-if st.session_state.get("batch_key") != key and background:
+if key not in runs:
     run_dir = RUNS_DIR / (f"{datetime.now():%Y%m%d_%H%M%S}_"
                           + (re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(up.name).stem)[:40]
                              or "upload"))
-    run_dir.mkdir(parents=True, exist_ok=True)
-    saved = run_dir / f"input_{Path(up.name).name}"
-    saved.write_bytes(raw)
-    args = ["scripts/06_score_upload.py", "--file", str(saved),
-            "--run-dir", str(run_dir), "--model-tag", tag, "--model", model_name,
-            "--threshold", f"{threshold}", "--max-explained", f"{int(max_explained)}"]
-    for uploaded, feature in (mapping or {}).items():
-        args += ["--map", f"{uploaded}={feature}"]
-    try:
-        log_dir = launch([{"key": "score", "name": f"Score {up.name}",
-                           "tag": run_dir.name, "args": args}],
-                        lock_tag=run_dir.name,
-                        meta={"source": "ui-upload", "file": up.name,
-                              "size_mb": round(size_mb, 1), "model_tag": tag,
-                              "threshold": threshold})
-    except LockHeld as exc:
-        st.error(str(exc))
+    if background:
+        # A detached process (creditsurv.runner) runs Phase 1 in a folder this page
+        # created, so closing the tab does not stop it; the page only reads it.
+        run_dir.mkdir(parents=True, exist_ok=True)
+        saved = run_dir / f"input_{Path(up.name).name}"
+        with open(saved, "wb") as fh:
+            fh.write(up.getbuffer())
+        args = ["scripts/06_score_upload.py", "--file", str(saved),
+                "--run-dir", str(run_dir), "--model-tag", tag, "--model", model_name,
+                "--threshold", f"{threshold}", "--phase2", "defer"]
+        for uploaded, feature in (mapping or {}).items():
+            args += ["--map", f"{uploaded}={feature}"]
+        if allow_unapproved:
+            args.append("--allow-unapproved-model")
+        try:
+            log_dir = launch([{"key": "score", "name": f"Decisions for {up.name}",
+                               "tag": run_dir.name, "args": args}],
+                             lock_tag=run_dir.name,
+                             meta={"source": "ui-upload", "file": up.name,
+                                   "size_mb": round(size_mb, 1), "model_tag": tag,
+                                   "threshold": threshold})
+        except LockHeld as exc:
+            st.error(str(exc))
+            st.stop()
+        runs[key] = {"run_dir": str(run_dir), "log_dir": str(log_dir)}
+    else:
+        state = {k: "pending" for k, _ in STEPS}
+        notes: dict[str, str] = {}
+        slot = st.empty()
+
+        def draw():
+            with slot.container():
+                for k, label in STEPS:
+                    note = f" — {notes[k]}" if notes.get(k) else ""
+                    st.markdown(f"{ICON[state[k]]} **{label}**{note}")
+
+        def progress(step, st_state, message=""):
+            if step in state:
+                state[step] = st_state
+                if message:
+                    notes[step] = message
+                draw()
+
+        draw()
+        try:
+            result = score_file(up.getvalue(), up.name, cfg, ctx=ctx,
+                                threshold=threshold, mapping=mapping,
+                                progress=progress, run_dir=run_dir,
+                                allow_unapproved_model=allow_unapproved)
+        except BatchError as exc:
+            st.error(f"**{exc.message}**" + (f"\n\n{exc.fix}" if exc.fix else ""))
+            show_failed_checks(exc.run_dir)
+            with st.expander("Details"):
+                st.code(exc.detail, language="text")
+            st.stop()
+        slot.empty()
+        runs[key] = {"run_dir": str(result.run_dir), "log_dir": None}
+
+run = runs[key]
+run_dir = Path(run["run_dir"])
+
+if run["log_dir"] and not (run_dir / "provenance.json").exists():
+    log_dir = Path(run["log_dir"])
+    state = effective_state(log_dir)
+    if state in ("failed", "interrupted", "completed"):
+        status = read_status(log_dir)
+        st.error("**Scoring stopped before the decisions were written.** Nothing was "
+                 "cleaned up or retried."
+                 + (f" ({status['failed_stage']})" if status.get("failed_stage") else ""))
+        show_failed_checks(run_dir)
+        with st.expander("Details", expanded=True):
+            st.code(tail_log(log_dir) or "(no output)", language="text")
+        if st.button("Clear and try again"):
+            runs.pop(key, None)
+            st.rerun()
         st.stop()
-    st.session_state["upload_job"] = {"key": key, "run_dir": str(run_dir),
-                                      "log_dir": str(log_dir)}
-    st.rerun()
+    st.info(f"Scoring {size_mb:,.0f} MB in the background: decisions first, reasons "
+            f"after. You can leave this page; the run keeps going and this view picks "
+            f"it up again (or open it later under *Open a previous run*).")
 
-if st.session_state.get("batch_key") != key:          # a download click reruns the
-    state = {k: "pending" for k, _ in STEPS}          # page; do not re-score then
-    notes: dict[str, str] = {}
-    box = st.container()
+    @st.fragment(run_every=2)
+    def watch():
+        now = effective_state(log_dir)
+        st.markdown(f"**{ICON['running'] if now in ('running', 'starting') else ICON['done']}"
+                    f" {now}**")
+        st.code(tail_log(log_dir, 40) or "(starting...)", language="text")
+        if (run_dir / "provenance.json").exists() or now not in ("running", "starting"):
+            st.rerun(scope="app")
 
-    def draw(placeholder):
-        with placeholder.container():
-            for k, label in STEPS:
-                note = f" — {notes[k]}" if notes.get(k) else ""
-                st.markdown(f"{ICON[state[k]]} **{label}**{note}")
+    watch()
+    st.stop()
 
-    slot = box.empty()
-    draw(slot)
-
-    def progress(step, st_state, message=""):
-        state[step] = st_state
-        if message:
-            notes[step] = message
-        draw(slot)
-
-    try:
-        with st.spinner("Processing..."):
-            ctx = load_context(cfg, tag, model_name)
-            result = run_batch(raw, up.name, cfg, ctx=ctx, threshold=threshold,
-                               max_explained=int(max_explained), mapping=mapping,
-                               progress=progress)
-    except BatchError as exc:
-        st.error(f"**{exc.message}**" + (f"\n\n{exc.fix}" if exc.fix else ""))
-        with st.expander("Details"):
-            st.code(exc.detail, language="text")
-        st.stop()
-    st.session_state["batch_key"] = key
-    st.session_state["batch_result"] = result
-
-# The view lives in _dashboard.render so a test can draw every panel and tab of a
-# finished run without uploading anything.
-render(st.session_state["batch_result"], cfg)
+# The view lives in _dashboard / _phase2_view so a test can draw every panel of a
+# run without uploading anything.
+show_run(run_dir, cfg, tag, model_name)

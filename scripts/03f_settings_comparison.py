@@ -21,6 +21,7 @@ result does not depend on batch membership or on the number of workers.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -40,7 +41,8 @@ from creditsurv.reporting.tables import to_markdown, write_json, write_table  # 
 
 S1_BAR = 0.90
 S2_BAR = 0.85
-CEILING = {"top1": 0.953, "top4": 0.94}     # measured in FINDINGS 7.1
+CEILING = {"top1": 0.953, "top4": 0.94}     # measured in FINDINGS 7.1, for `full`;
+                                            # replaced by the reference model's own
 
 CANDIDATES = [
     ("C1", 300, 100),
@@ -94,6 +96,23 @@ def main(argv: list[str] | None = None) -> int:
               f"scripts/03d_explainer_validation.py first: its full-settings reasons "
               f"are the reference this compares against.", file=sys.stderr)
         return 2
+    # The reference must be THIS model's full-settings reasons. Both models read the
+    # same data file, so a reference built on another model would load cleanly and
+    # compare the wrong things (FINDINGS 7a: the answer belongs to one model).
+    ref_json = (cfg.paths.tables_dir
+                / f"03d_explainer_validation_{args.reference_tag}.json")
+    ref_meta = (json.loads(ref_json.read_text(encoding="utf-8"))
+                if ref_json.exists() else {})
+    if ref_meta.get("model_tag") != args.model_tag:
+        print(f"ERROR: the reference {ref_json.name} is for model "
+              f"{ref_meta.get('model_tag', '(unknown)')!r}, not {args.model_tag!r}. "
+              f"Run scripts/03d_explainer_validation.py --model-tag {args.model_tag} "
+              f"--tag <tag> first and pass --reference-tag <tag>.", file=sys.stderr)
+        return 2
+    ceiling = ref_meta.get("reference_ceiling_survshap_vs_itself") or {}
+    if ceiling:
+        CEILING.update(top1=float(ceiling.get("top1_agreement", CEILING["top1"])),
+                       top4=float(ceiling.get("mean_top4_overlap", CEILING["top4"])))
     reference_table = pd.read_csv(ref_path)
     if args.n_explain:
         reference_table = reference_table.head(args.n_explain)

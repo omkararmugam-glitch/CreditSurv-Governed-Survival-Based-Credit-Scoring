@@ -8,6 +8,7 @@ cleaning, scoring, explanation, notices and file writing are all exercised.
 from __future__ import annotations
 
 import zipfile
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -61,12 +62,53 @@ def _training_frame(n=400, seed=0) -> pd.DataFrame:
     return df
 
 
+def write_registry(cfg, model_path, *, status="approved", tag="stub", spec=SPEC,
+                   explainers=("survshap",), settings=None, evidence=None,
+                   rules_passed=True):
+    """A registry holding the stub model, so scoring's approval gate is exercised
+    for real rather than bypassed. ``status="approved"`` carries the approval
+    block ``07_model_registry.py approve`` would write."""
+    import hashlib
+
+    import yaml
+
+    d = cfg.decision
+    record = {
+        "status": status,
+        "status_reason": f"test fixture ({status})",
+        "model_file": str(model_path),
+        "model_sha256": hashlib.sha256(Path(model_path).read_bytes()).hexdigest(),
+        "features": {"numeric": list(spec.numeric),
+                     "categorical": list(spec.categorical)},
+        "training": {"n_train": 400},
+        "known_defects": [],
+        "non_disclosable_features": [],
+        "validation_metrics": {},
+    }
+    if status == "approved":
+        record["approval"] = {
+            "rules_passed": ["A1_model_file"] if rules_passed else [],
+            "approved_by": "test", "approved_on": "2026-09-25",
+            "findings_section": "test", "explainers": list(explainers),
+            "explain_settings": settings or [[d.explain_nsamples,
+                                              d.explain_n_background]],
+            "evidence": evidence or {}}
+    path = Path(cfg.paths.registry)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = (yaml.safe_load(path.read_text(encoding="utf-8"))
+                if path.exists() else None) or {"models": {}}
+    existing["models"][tag] = record
+    path.write_text(yaml.safe_dump(existing), encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def cfg(tmp_path) -> Config:
     """Everything under tmp_path: a test never writes into the project's outputs."""
     return Config(paths=Paths(data_dir=tmp_path / "data", models_dir=tmp_path / "models",
                               figures_dir=tmp_path / "figures",
-                              tables_dir=tmp_path / "tables"),
+                              tables_dir=tmp_path / "tables",
+                              registry=tmp_path / "models.yaml"),
                   decision=DecisionConfig(
         model_tag="stub", horizon_months=36, reject_at_or_above=0.45,
         explain_nsamples=2 * len(NUMERIC + CATEGORICAL), explain_n_background=8,
@@ -85,12 +127,14 @@ def runs(tmp_path):
 def ctx(cfg) -> ScoringContext:
     train = _training_frame()
     dm = build_design_matrix(train, SPEC, flavour="gbm")
+    model_path = _write_dummy_model(cfg)
+    write_registry(cfg, model_path)
     # Cleaning values are fitted on the training frame, exactly as Stage 2 does,
     # and the context only ever reapplies them.
     return ScoringContext(
         cfg=cfg, model_tag="stub", model_name="discrete_hazard", model=StubModel(),
         spec=SPEC, bundle={"artefacts": {"gbm_columns": list(dm.X.columns)}},
-        model_path=_write_dummy_model(cfg), background=dm.X, reference=train,
+        model_path=model_path, background=dm.X, reference=train,
         clean_values=fit_values(train, SPEC, source="stub_training.parquet"),
         policy=policy_from_config(cfg),
         times=np.array([6.0, 12.0, 24.0, 36.0]), data_source=_dummy_source(cfg))
@@ -140,8 +184,10 @@ def test_end_to_end_produces_every_output(runs, cfg, ctx):
     res = run_batch(_upload(), "applicants.csv", cfg, ctx=ctx, runs_dir=runs,
                     progress=lambda s, st, m="": steps.append((s, st)))
 
+    # Decisions first (Phase 1: check, clean, score, profile, files), reasons after
+    # (Phase 2: explain) -- the order that lets decisions show within minutes.
     assert [s for s, st in steps if st == "done"] == \
-        ["check", "clean", "score", "explain", "profile", "files"]
+        ["check", "clean", "score", "profile", "files", "explain"]
     # Profiling samples the whole file, so it finishes with the last block --
     # after scoring, though the page lists it earlier and shows it in progress.
     assert ("profile", "running") in steps
@@ -190,11 +236,19 @@ def test_notices_one_per_explained_rejected_applicant(runs, cfg, ctx):
         names = zf.namelist()
         text = zf.read(names[0]).decode("utf-8")
     explained = rejected[rejected["explained"] == "explained"]
-    assert len(names) == len(explained) == min(len(rejected), cfg.decision.max_explained)
+    pending = rejected[rejected["explained"] == batch.NO_REASON_NOTE]
+    # A notice for every applicant with a stated reason. One with no disclosable
+    # reason gets no notice ("no factor was adverse" does not meet Regulation B):
+    # the row is marked pending manual review instead.
+    assert len(names) == len(explained)
+    assert len(explained) + len(pending) == min(len(rejected),
+                                                cfg.decision.max_explained)
+    assert pending["notice_file"].fillna("").eq("").all()
     assert set(explained["notice_file"]) == set(names)
     assert "STATEMENT OF ADVERSE ACTION" in text
     if len(rejected) > cfg.decision.max_explained:
-        capped = rejected[rejected["explained"] != "explained"]
+        capped = rejected[~rejected["explained"].isin(["explained",
+                                                        batch.NO_REASON_NOTE])]
         assert capped["reason_1"].fillna("").eq("").all()
         assert capped["explained"].str.contains("run stopped before this row").all()
 
@@ -450,8 +504,12 @@ def test_rejected_rows_are_explained_first_and_the_cap_is_marked(runs, cfg, ctx)
     assert (approved["explained"] == "not applicable (approved)").all()
     assert approved[["reason_1", "reason_2", "reason_3"]].fillna("").eq("").all().all()
 
-    explained = rejected[rejected["explained"] == "explained"]
-    capped = rejected[rejected["explained"] != "explained"]
+    # Explained: with a notice, or pending manual review for want of a disclosable
+    # reason. Either way the explainer ran; only the capped rows were never reached.
+    explained = rejected[rejected["explained"].isin(["explained",
+                                                     batch.NO_REASON_NOTE])]
+    capped = rejected[~rejected["explained"].isin(["explained",
+                                                   batch.NO_REASON_NOTE])]
     assert len(explained) == min(len(rejected), cap) == res.summary["n_explained"]
     assert len(capped) == res.summary["n_rejected_without_reasons"]
     assert len(capped) > 0                                   # the cap really bit
@@ -469,14 +527,16 @@ def test_no_cap_means_every_rejected_applicant_is_explained(runs, cfg, ctx):
     assert len(rejected) == res.summary["n_rejected"] > 0
     assert res.summary["n_explained"] == len(rejected)
     assert res.summary["n_rejected_without_reasons"] == 0
-    assert (rejected["explained"] == "explained").all()
-    # A notice can still end up with no disclosable reason -- every adverse driver
-    # undisclosable or without Regulation B wording. That is counted, not hidden.
+    assert rejected["explained"].isin(["explained", batch.NO_REASON_NOTE]).all()
+    # An applicant can still end up with no disclosable reason -- every adverse
+    # driver undisclosable or without Regulation B wording. That is counted and
+    # marked pending, and no notice is issued for it.
     blank = int(rejected["reason_1"].fillna("").eq("").sum())
-    assert blank == res.summary["n_explained_without_disclosable_reason"]
-    assert rejected["reason_1"].fillna("").ne("").sum() == len(rejected) - blank
+    assert blank == res.summary["n_explained_without_disclosable_reason"] \
+        == res.summary["n_pending_manual_review"]
+    assert (rejected["explained"] == batch.NO_REASON_NOTE).sum() == blank
     assert "adverse_action_notices.zip" in res.files
-    assert res.summary["n_notices"] == len(rejected)
+    assert res.summary["n_notices"] == len(rejected) - blank
 
 
 def test_an_explicit_cap_still_marks_the_remainder(runs, cfg, ctx):
@@ -518,7 +578,7 @@ def test_explanations_resume_instead_of_repeating(runs, cfg, ctx):
     second = run_batch(_upload(), "a.csv", cfg, ctx=ctx, run_dir=resumed_dir,
                        max_explained=0)
     rejected = pd.read_csv(second.files["rejected_applicants.csv"])
-    assert (rejected["explained"] == "explained").all()
+    assert rejected["explained"].isin(["explained", batch.NO_REASON_NOTE]).all()
     # The two rows carried over from the ledger have the reasons they had before.
     before = pd.read_csv(first.files["rejected_applicants.csv"])
     carried = before[before["explained"] == "explained"]["applicant_id"].tolist()
@@ -689,11 +749,10 @@ def test_explainer_defaults_to_survshap_and_is_recorded(runs, cfg, ctx):
     res = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs)
     scored = pd.read_csv(res.files["scored_applicants.csv"])
     assert res.summary["explainer"] == "survshap"
-    explained = scored[scored["explained"] == "explained"]
-    assert (explained["explainer"] == "survshap").all()
-    # Rows with no reasons claim no explainer.
-    assert scored.loc[scored["explained"] != "explained", "explainer"].fillna("")\
-        .eq("").all()
+    ran = scored["explained"].isin(["explained", batch.NO_REASON_NOTE])
+    assert (scored.loc[ran, "explainer"] == "survshap").all()
+    # Rows the explainer never reached claim no explainer.
+    assert scored.loc[~ran, "explainer"].fillna("").eq("").all()
 
 
 def test_auto_falls_back_to_survshap_without_a_booster(ctx):

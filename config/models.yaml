@@ -1,0 +1,1294 @@
+# Model registry. Read by every scoring run (creditsurv/registry.py).
+#
+# status: approved   -- may score applicants for lending decisions
+#         candidate  -- proposed; evidence not complete, so NOT for lending decisions
+#         benchmark  -- research comparison only
+#         deprecated -- withdrawn; status_reason says why
+#
+# A model is approved only by
+#     python scripts/07_model_registry.py approve --model-tag TAG --by NAME --findings 7l
+# which checks the approval rules (python scripts/07_model_registry.py rules) and
+# writes the approval block. Scoring refuses "approved" without that block, and
+# re-checks the model file, its features and every evidence file on each run.
+#
+# This file is written by 07_model_registry.py; comments other than this header
+# are not preserved. Edit status_reason and known_defects by hand if needed, then
+# re-run "07_model_registry.py check" to confirm the file still loads.
+
+models:
+  dev:
+    status: benchmark
+    summary: 55 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_dev.pkl
+    model_sha256: 0d641f3a898232bdf274a256608f877b5d2af2111ad0ffcaad6514633e3ae98e
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      split_scheme: random
+      n_train: 160000
+      n_test: 40000
+      with_lc_grade: false
+      data_source: outputs/data/dev_sample.parquet
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 40000
+        event_rate: 0.1198
+        concordance: 0.6627
+        ibs: 0.1022
+        auc_12m: 0.668
+        auc_36m: 0.6408
+      discrete_hazard:
+        split: test
+        n: 40000
+        event_rate: 0.1198
+        concordance: 0.6791
+        ibs: 0.1019
+        auc_12m: 0.6901
+        auc_36m: 0.648
+  full:
+    status: deprecated
+    summary: 55 numeric + 6 categorical features
+    status_reason: 'FINDINGS 7c defect: trained without a credit score or employment length;
+      uses addr_state, a non-disclosable input that was among the top adverse drivers for
+      166 of 255 declines in test 1 (FINDINGS 7l). Superseded by full_applicant_nogeo.'
+    model_file: outputs/models/02_models_full.pkl
+    model_sha256: ef842a444611cb628f101ecf4304efaa131c0334fa6d48070415ac3be612f60c
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      split_scheme: random
+      n_train: 1806232
+      n_test: 451558
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+      data_source: outputs/data/accepted_labeled.parquet
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    - id: 7l-test1
+      blocking: true
+      summary: addr_state was among the top adverse drivers for 166 of 255 declines (65%)
+        in test_1_baseline_1k.csv, far above the 5% fair-lending review share
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 451558
+        event_rate: 0.1183
+        concordance: 0.67
+        ibs: 0.1008
+        auc_12m: 0.6752
+        auc_36m: 0.6429
+      discrete_hazard:
+        split: test
+        n: 451558
+        event_rate: 0.1183
+        concordance: 0.6973
+        ibs: 0.0998
+        auc_12m: 0.7118
+        auc_36m: 0.6388
+  full_applicant_nogeo:
+    status: candidate
+    summary: 59 numeric + 5 categorical features
+    status_reason: 'Proposed default (FINDINGS 7i, 7k, 7l). All seven approval rules pass (2026-09-27);
+      not yet approved: awaiting sign-off with 07_model_registry.py approve.'
+    model_file: outputs/models/02_models_full_applicant_nogeo.pkl
+    model_sha256: 406e440d52b5d136d9d0585e158f697b3e2b9dd9e2ec2e7657c3488b75fb86ec
+    features:
+      numeric:
+      - loan_amnt
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      - fico_midpoint
+      - emp_length_years
+      - loan_to_income
+      - log_annual_inc
+      - term_months
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: random
+      n_train: 1806232
+      n_test: 451558
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+      with_derived: true
+      dropped_by_request:
+      - installment
+      - installment_to_income
+      - addr_state
+      added_by_request:
+      - term_months
+    known_defects: []
+    uses_non_disclosable_features: false
+    non_disclosable_features: []
+    validation_metrics:
+      cox:
+        split: test
+        n: 451558
+        event_rate: 0.1183
+        concordance: 0.6723
+        ibs: 0.1016
+        auc_12m: 0.6761
+        auc_36m: 0.5966
+      discrete_hazard:
+        split: test
+        n: 451558
+        event_rate: 0.1183
+        concordance: 0.6958
+        ibs: 0.1005
+        auc_12m: 0.7098
+        auc_36m: 0.6103
+  holdout:
+    status: benchmark
+    summary: 55 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout.pkl
+    model_sha256: 075625bc4762082987c135feeeff36d34f4f26b3f43bf3cde5725427cce9ef73
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 884664
+      n_test: 1373126
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+      with_derived: false
+      dropped_by_request: []
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6602
+        ibs: 0.101
+        auc_12m: 0.6555
+        auc_36m: 0.6343
+      discrete_hazard:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6936
+        ibs: 0.0992
+        auc_12m: 0.7025
+        auc_36m: 0.6417
+  holdout_applicant:
+    status: benchmark
+    summary: 59 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_applicant.pkl
+    model_sha256: 9dd59f161f6e98cf7cdfb4a185bf70345f12179f8ed24a3508b6e230aebf8f55
+    features:
+      numeric:
+      - loan_amnt
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      - fico_midpoint
+      - emp_length_years
+      - loan_to_income
+      - log_annual_inc
+      - term_months
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 884664
+      n_test: 1373126
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+      with_derived: true
+      dropped_by_request:
+      - installment
+      - installment_to_income
+      added_by_request:
+      - term_months
+    known_defects: []
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.674
+        ibs: 0.1003
+        auc_12m: 0.6759
+        auc_36m: 0.6085
+      discrete_hazard:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6938
+        ibs: 0.0995
+        auc_12m: 0.7032
+        auc_36m: 0.616
+  holdout_applicant_nogeo:
+    status: benchmark
+    summary: 59 numeric + 5 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_applicant_nogeo.pkl
+    model_sha256: 09546188d54bc010b448312b34cc13af57568afb40f355bf5c41bc9777509b7a
+    features:
+      numeric:
+      - loan_amnt
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      - fico_midpoint
+      - emp_length_years
+      - loan_to_income
+      - log_annual_inc
+      - term_months
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 884664
+      n_test: 1373126
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+      with_derived: true
+      dropped_by_request:
+      - installment
+      - installment_to_income
+      - addr_state
+      added_by_request:
+      - term_months
+    known_defects: []
+    uses_non_disclosable_features: false
+    non_disclosable_features: []
+    validation_metrics:
+      cox:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6719
+        ibs: 0.1004
+        auc_12m: 0.6736
+        auc_36m: 0.6053
+      discrete_hazard:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6927
+        ibs: 0.0996
+        auc_12m: 0.7022
+        auc_36m: 0.6129
+  holdout_derived:
+    status: benchmark
+    summary: 61 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_derived.pkl
+    model_sha256: d3ebe0e7472ec3a6c21e3e162462a0f8d5988b33307cfbb182a542cf23db5daf
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      - fico_midpoint
+      - emp_length_years
+      - installment_to_income
+      - loan_to_income
+      - log_annual_inc
+      - term_months
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 884664
+      n_test: 1373126
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+      with_derived: true
+      dropped_by_request: []
+      added_by_request:
+      - term_months
+    known_defects: []
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6767
+        ibs: 0.1009
+        auc_12m: 0.6746
+        auc_36m: 0.6073
+      discrete_hazard:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.7028
+        ibs: 0.0986
+        auc_12m: 0.7144
+        auc_36m: 0.6333
+  holdout_devsample_recomputed:
+    status: benchmark
+    summary: 55 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_devsample_recomputed.pkl
+    model_sha256: ''
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: C:\Users\Omkar\OneDrive\Documents\data science 2\outputs\data\dev_sample.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 78363
+      n_test: 121637
+      time_bin_months: 1
+      negative_subsample: 1.0
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 121637
+        event_rate: 0.0849
+        concordance: 0.6734
+        ibs: 0.1007
+        auc_12m: 0.6741
+        auc_36m: 0.6329
+      discrete_hazard:
+        split: test
+        n: 121637
+        event_rate: 0.0849
+        concordance: 0.6725
+        ibs: 0.1012
+        auc_12m: 0.6775
+        auc_36m: 0.64
+  holdout_lcgrade:
+    status: benchmark
+    summary: 56 numeric + 8 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_lcgrade.pkl
+    model_sha256: faff035466fae40a0b7a55b2adc83dce846e9e6554dd94e5f4e1222cc8323c28
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      - int_rate
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+      - grade
+      - sub_grade
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 884664
+      n_test: 1373126
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: true
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.7006
+        ibs: 0.099
+        auc_12m: 0.7021
+        auc_36m: 0.6321
+      discrete_hazard:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.7158
+        ibs: 0.0978
+        auc_12m: 0.7264
+        auc_36m: 0.6403
+  holdout_medium:
+    status: benchmark
+    summary: 55 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_medium.pkl
+    model_sha256: e7a446b5d0f6d6d9e117d812cfcef33c60b688e553d2e91d85e529180fd0fee4
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/dev_sample.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 78363
+      n_test: 121637
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 121637
+        event_rate: 0.0849
+        concordance: 0.6734
+        ibs: 0.1007
+        auc_12m: 0.6741
+        auc_36m: 0.6329
+      discrete_hazard:
+        split: test
+        n: 121637
+        event_rate: 0.0849
+        concordance: 0.6762
+        ibs: 0.1006
+        auc_12m: 0.6827
+        auc_36m: 0.6425
+  holdout_nograde:
+    status: benchmark
+    summary: 55 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_nograde.pkl
+    model_sha256: 507e180f42b338ab8fe860f5eebe09b06c583f40c783e07682d745a2dd099109
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/accepted_labeled.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 884664
+      n_test: 1373126
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6602
+        ibs: 0.101
+        auc_12m: 0.6555
+        auc_36m: 0.6343
+      discrete_hazard:
+        split: test
+        n: 1373126
+        event_rate: 0.0847
+        concordance: 0.6936
+        ibs: 0.0992
+        auc_12m: 0.7025
+        auc_36m: 0.6417
+  holdout_small:
+    status: benchmark
+    summary: 55 numeric + 6 categorical features
+    status_reason: Research comparison (FINDINGS 6, 7b, 7i); never for lending decisions.
+    model_file: outputs/models/02_models_holdout_small.pkl
+    model_sha256: 3336429f1d303e38b0c49575f582e52c3a72e275b5914e6f72ce096cbc4eb688
+    features:
+      numeric:
+      - loan_amnt
+      - installment
+      - annual_inc
+      - dti
+      - open_acc
+      - total_acc
+      - revol_bal
+      - revol_util
+      - mort_acc
+      - delinq_2yrs
+      - inq_last_6mths
+      - pub_rec
+      - pub_rec_bankruptcies
+      - tax_liens
+      - acc_now_delinq
+      - delinq_amnt
+      - chargeoff_within_12_mths
+      - collections_12_mths_ex_med
+      - mths_since_last_delinq
+      - mths_since_last_record
+      - mths_since_last_major_derog
+      - tot_coll_amt
+      - tot_cur_bal
+      - total_rev_hi_lim
+      - acc_open_past_24mths
+      - avg_cur_bal
+      - bc_open_to_buy
+      - bc_util
+      - mo_sin_old_il_acct
+      - mo_sin_old_rev_tl_op
+      - mo_sin_rcnt_rev_tl_op
+      - mo_sin_rcnt_tl
+      - mths_since_recent_bc
+      - mths_since_recent_bc_dlq
+      - mths_since_recent_inq
+      - mths_since_recent_revol_delinq
+      - num_accts_ever_120_pd
+      - num_actv_bc_tl
+      - num_actv_rev_tl
+      - num_bc_sats
+      - num_bc_tl
+      - num_il_tl
+      - num_op_rev_tl
+      - num_rev_accts
+      - num_rev_tl_bal_gt_0
+      - num_sats
+      - num_tl_30dpd
+      - num_tl_90g_dpd_24m
+      - num_tl_op_past_12m
+      - pct_tl_nvr_dlq
+      - percent_bc_gt_75
+      - tot_hi_cred_lim
+      - total_bal_ex_mort
+      - total_bc_limit
+      - total_il_high_credit_limit
+      categorical:
+      - purpose
+      - home_ownership
+      - verification_status
+      - addr_state
+      - application_type
+      - initial_list_status
+    training:
+      data_source: outputs/data/dev_sample.parquet
+      split_scheme: out_of_time
+      oot_cutoff: 2016
+      n_train: 78363
+      n_test: 121637
+      time_bin_months: 3
+      negative_subsample: 0.4
+      with_lc_grade: false
+    known_defects:
+    - id: 7c
+      blocking: true
+      summary: 'no credit score or employment length: default_spec dropped fico_range_* before
+        fico_midpoint existed (FINDINGS 7c)'
+    uses_non_disclosable_features: true
+    non_disclosable_features:
+    - addr_state
+    validation_metrics:
+      cox:
+        split: test
+        n: 121637
+        event_rate: 0.0849
+        concordance: 0.6734
+        ibs: 0.1007
+        auc_12m: 0.6741
+        auc_36m: 0.6329
+      discrete_hazard:
+        split: test
+        n: 121637
+        event_rate: 0.0849
+        concordance: 0.6762
+        ibs: 0.1006
+        auc_12m: 0.6827
+        auc_36m: 0.6425

@@ -1,0 +1,155 @@
+{
+  "tag": "explainer_full_applicant_nogeo",
+  "model_tag": "full_applicant_nogeo",
+  "model": "discrete_hazard",
+  "n_applicants": 1000,
+  "threshold": 0.3,
+  "horizon_months": 36,
+  "nsamples": 600,
+  "n_background": 100,
+  "bars": {
+    "E1_top1_agreement": 0.9,
+    "E2_mean_top4_overlap": 0.75
+  },
+  "treeshap_vs_survshap": {
+    "n": 1000,
+    "top1_agreement": 0.802,
+    "mean_top4_overlap": 0.88025,
+    "median_top4_overlap": 1.0,
+    "exact_top4_set_match": 0.543,
+    "no_reasons_either_side": 0
+  },
+  "E1_pass": false,
+  "E2_pass": true,
+  "verdict": "FAIL",
+  "reference_ceiling_survshap_vs_itself": {
+    "n": 300,
+    "top1_agreement": 0.97,
+    "mean_top4_overlap": 0.9591666666666666,
+    "median_top4_overlap": 1.0,
+    "exact_top4_set_match": 0.8366666666666667,
+    "no_reasons_either_side": 0
+  },
+  "secondary_averaged_survshap": {},
+  "seconds": {
+    "treeshap_total": 7.95,
+    "treeshap_per_applicant_ms": 7.954,
+    "survshap_total": 2176.9,
+    "survshap_per_applicant_s": 2.177
+  },
+  "projected_100k_rejected": {
+    "treeshap_minutes": 13.3,
+    "survshap_hours": 60.5
+  },
+  "provenance": {
+    "stage": "03d_explainer_validation",
+    "created_at": "2026-09-27T12:09:10+00:00",
+    "code": {
+      "commit": "9a082beaf95981c8c845b6054f1ccd9177a888bf",
+      "code_dirty": true,
+      "dirty_files": [
+        "onfig/config.yaml",
+        "scripts/01_build_labels.py",
+        "scripts/02_train_models.py",
+        "scripts/02r_recompute_metrics.py",
+        "scripts/02s_save_cleaning_values.py",
+        "scripts/03_explain.py",
+        "scripts/03b_bootstrap_segments.py",
+        "scripts/03d_explainer_validation.py",
+        "scripts/03e_feature_ablation.py",
+        "scripts/03f_settings_comparison.py",
+        "scripts/04_reject_inference.py",
+        "scripts/05_report.py",
+        "scripts/06_score_upload.py",
+        "scripts/check_provenance.py",
+        "scripts/inspect_data.py",
+        "src/creditsurv/batch.py",
+        "src/creditsurv/cleaning.py",
+        "src/creditsurv/config.py",
+        "src/creditsurv/derive.py",
+        "src/creditsurv/drift.py",
+        "src/creditsurv/eda.py",
+        "src/creditsurv/environment.py",
+        "src/creditsurv/explain/adverse_action.py",
+        "src/creditsurv/explain/compare.py",
+        "src/creditsurv/explain/naive_shap.py",
+        "src/creditsurv/explain/parallel.py",
+        "src/creditsurv/explain/segments.py",
+        "src/creditsurv/explain/survshap.py",
+        "src/creditsurv/features/build.py",
+        "src/creditsurv/io/loaders.py",
+        "src/creditsurv/models/cox.py",
+        "src/creditsurv/models/evaluate.py",
+        "src/creditsurv/pipeline.py",
+        "src/creditsurv/reporting/figures.py",
+        "src/creditsurv/runner.py",
+        "src/creditsurv/schema_match.py",
+        "config/models.yaml",
+        "scripts/07_model_registry.py",
+        "scripts/wsl_launch.sh",
+        "src/creditsurv.egg-info/",
+        "src/creditsurv/evidence_jobs.py",
+        "src/creditsurv/phase2.py",
+        "src/creditsurv/registry.py",
+        "src/creditsurv/run_checks.py",
+        "src/creditsurv/wsl_sync.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4997,
+      "mtime": "2026-09-26T19:40:59+00:00",
+      "sha256": "28abbddf73dd35ec745726882f207e790a387156ba398f8d042b1600f419296b"
+    },
+    "args": {
+      "tag": "explainer_full_applicant_nogeo",
+      "model_tag": "full_applicant_nogeo",
+      "n_explain": 1000,
+      "n_ceiling": 300,
+      "threshold": 0.3
+    },
+    "inputs": {
+      "data": {
+        "path": "outputs/data/accepted_labeled.parquet",
+        "exists": true,
+        "bytes": 174494897,
+        "mtime": "2026-09-21T12:47:13+00:00",
+        "sha256": "b94a5e97eaf8378b0f04a2f7bf9d936412fe56d90a719c25283063817ffd3d1d"
+      },
+      "model": {
+        "path": "outputs/models/02_models_full_applicant_nogeo.pkl",
+        "exists": true,
+        "bytes": 44589779,
+        "mtime": "2026-09-24T20:25:00+00:00",
+        "sha256": "406e440d52b5d136d9d0585e158f697b3e2b9dd9e2ec2e7657c3488b75fb86ec"
+      }
+    },
+    "outputs": {
+      "result": {
+        "path": "outputs/tables/03d_explainer_validation_explainer_full_applicant_nogeo.json",
+        "exists": false
+      },
+      "per_applicant": {
+        "path": "outputs/tables/03d_explainer_per_applicant_explainer_full_applicant_nogeo.csv",
+        "exists": true,
+        "bytes": 457039,
+        "mtime": "2026-09-27T12:09:10+00:00",
+        "sha256": "ca2d03fd204007b097869a3651bad3b9f880c530e87252a6de368b870e11b5bb"
+      }
+    },
+    "environment": {
+      "python": "3.14.4",
+      "packages": {
+        "numpy": "2.5.3",
+        "pandas": "2.3.3",
+        "pyarrow": "25.0.1",
+        "scikit-learn": "1.9.1",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.18.1"
+      }
+    }
+  }
+}

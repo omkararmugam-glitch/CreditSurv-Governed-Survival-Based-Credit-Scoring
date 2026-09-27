@@ -5,8 +5,8 @@ time-dependent feature attribution (SurvSHAP(t)-style) and a **diagnostic-gated*
 reject-inference stage that only applies a correction when a pre-registered test
 says selection bias is actually present.
 
-No frontend, no API. A Python package plus terminal scripts; all results are
-written to `outputs/`.
+No API. A Python package plus terminal scripts, with an optional local Streamlit
+dashboard over the same scripts; all results are written to `outputs/`.
 
 ## Why survival rather than a binary classifier
 
@@ -21,7 +21,8 @@ instead of one number.
 ## Status
 
 All five stages are built and have been run on the full dataset (2,257,790
-loans). 300 tests pass with no real data required. Results are in
+loans). The 742 tests need no real data and pass on Windows and in WSL; each
+platform skips the handful that only apply to the other one. Results are in
 [FINDINGS.md](FINDINGS.md).
 
 | Stage | Full-data run |
@@ -46,6 +47,14 @@ installed and working, and adds only pure-Python ones.
 python -m venv --system-site-packages .venv
 ./.venv/Scripts/python.exe -m pip install lifelines pyyaml
 ```
+
+**On Windows with Smart App Control, anything that needs `lightgbm` or `shap` runs
+in WSL.** Smart App Control later blocked those two packages here as well
+([FINDINGS 0.1](FINDINGS.md#01-the-same-policy-later-blocked-two-packages-that-had-been-working)).
+So the dashboard, applicant scoring and model training run under WSL2 (Ubuntu), set up
+once as described in [On this machine: run it in WSL](#on-this-machine-run-it-in-wsl).
+The Windows venv above still runs the tests, the registry commands and the pages that
+only read results.
 
 ## Running it
 
@@ -116,28 +125,123 @@ list lives in `src/creditsurv/plan.py`, shared with the UI below, and
 A local Streamlit app wraps the same scripts. It is optional; everything it does
 is also available from the command line above.
 
+### On this machine: run it in WSL
+
+Windows Smart App Control blocks `lightgbm` and `shap` here (see
+[creditsurv/environment.py](src/creditsurv/environment.py)), so the app is served from
+Linux under WSL2. One command, from the project folder in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_linux.ps1
+```
+
+Then open http://localhost:8501. The header of every page says **Running on Linux
+(WSL)** in green. If it says **Running on Windows** in red, you are looking at a
+Windows instance, which cannot score.
+
+[run_linux.ps1](run_linux.ps1) (with its Linux half,
+[scripts/wsl_launch.sh](scripts/wsl_launch.sh)):
+
+1. stops any Windows process listening on port 8501, such as a stale Windows
+   Streamlit. It does not stop WSL's own port forwarder (`wslrelay`); an earlier
+   Linux Streamlit is stopped from inside WSL instead;
+2. syncs `src`, `app`, `scripts`, `config`, `tests`, `.streamlit`, `README.md`,
+   `pyproject.toml` and `requirements-linux.txt` to `~/creditsurv`. Code folders are
+   mirrored, so a file deleted on Windows is deleted in WSL too. `.venv`, caches and
+   `*.egg-info` are never touched. `outputs/models` and `outputs/data` are copied only
+   where the Windows file is newer. `FINDINGS.md` is copied unless the WSL copy is
+   newer (a Full run there writes it); in that case it is kept and the script says so;
+3. checks that lifelines, lightgbm, shap, streamlit and psutil import in the Linux
+   venv, and names anything missing together with the command that fixes it;
+4. starts Streamlit in WSL with `--server.headless true --server.address 0.0.0.0`
+   and prints the URL. Ctrl+C stops it.
+
+Edits made on Windows reach WSL only when the script runs again. Other switches:
+`-CheckOnly` (sync and check, do not start), `-Port 8502`, `-Distro <name>`.
+
+**Results stay in WSL until you copy them back.** Everything the app or the
+pipeline writes goes to `~/creditsurv/outputs`. To see finished work in File
+Explorer and VS Code:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run_linux.ps1 -CopyBack
+```
+
+This copies finished Score Applicants runs (`outputs/runs/*` that have their
+`provenance.json`), finished pipeline runs (`outputs/logs/runs/*` whose `status.json`
+has a finish time), `outputs/tables`, `figures`, `eda`, `models`, the stage logs and
+`FINDINGS.md`. It copies a file only where the WSL copy is newer and never deletes
+anything. Unfinished runs are skipped and listed. `outputs/data` (~4 GB, rebuildable)
+is not copied back.
+
+**One-time setup in WSL** (Ubuntu):
+
+```bash
+sudo apt install python3-venv libgomp1 rsync  # libgomp1: lightgbm's OpenMP runtime
+mkdir -p ~/creditsurv && cd ~/creditsurv       # run_linux.ps1 -CheckOnly fills it
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-linux.txt
+```
+
+`libgomp1` is the one dependency pip cannot install. Without it, `import lightgbm`
+fails with `libgomp.so.1: cannot open shared object file`.
+[requirements-linux.txt](requirements-linux.txt) lists everything else: the pipeline,
+the app (streamlit, psutil) and the tests (pytest). A test keeps it in step with
+`pyproject.toml`. Run the pip line from `~/creditsurv`, because its `-e .` refers to
+the current folder. On first setup, run `run_linux.ps1 -CheckOnly` once before the
+pip step, so the sources are there to install.
+
+About `0.0.0.0`: under WSL2's default NAT networking, the Linux VM is reachable
+only from this Windows machine, so the app is still not on the network. In WSL's
+*mirrored* networking mode, Linux listeners share the Windows interfaces, and
+Windows Firewall decides who else can connect.
+
+### Anywhere Smart App Control is not in the way
+
 ```bash
 ./.venv/Scripts/python.exe -m streamlit run app/app.py  # from the project root
 ```
 
-Then open http://localhost:8501. Streamlit and psutil come from the system
-site-packages in this venv; elsewhere, install them with `pip install -e ".[ui]"`. The app binds to `localhost` only and sends no
-usage statistics (`.streamlit/config.toml`).
+Install the UI dependencies with `pip install -e ".[ui]"`. This binds to
+`localhost` only and sends no usage statistics (`.streamlit/config.toml`). On this
+machine it starts, but the header reads **Running on Windows** and a banner explains
+the Smart App Control block. Pages that only read results still work; scoring does
+not.
 
 | Page | What it does |
 |---|---|
 | **Score applicants** (home) | Upload a CSV; it is checked, cleaned, profiled, scored and explained, then written out as CSVs with Regulation B reasons, notices, a cleaning report and a drift check. Described below. |
 | **Overview** | Every result tag and stage, with its provenance status: 🟢 verified (stamp re-hashes cleanly), 🟠 unverified (produced before stamping), 🔴 changed (an input or model it recorded has since been replaced), ⚪ not run. |
 | **Run pipeline** | Runs the holdout sequence from `creditsurv.plan` (identical to `run_holdout.ps1`). Defaults to **Small** with **overwrite off**. Before starting, it lists any existing outputs that would make a stage refuse (the same check the scripts do); ticking Overwrite shows exactly which files are replaced and asks for confirmation. Tags `full` / `dev` are refused. |
+| **Model registry** | Every model in `config/models.yaml` against the seven approval rules, each PASS/FAIL with its reason (the same check as `07_model_registry.py rules`). For a **candidate** it offers **Run ablation** (03e, 5-10 min) and **Run explainer validation** (03d, about an hour) as background jobs with a live progress bar (applicants explained or ablation features done, with an ETA) and a log you can come back to. Served from Windows, a job syncs the code to WSL, runs there, and copies the results back. One job at a time, never with `--overwrite`, and never a second run once evidence exists. When all seven pass, **Approve** re-checks them and records who approved it and when. Disabled in the WSL copy, whose `config/` is replaced on every sync. |
 | **Results viewer** | Tables, figures, the adverse-action notice and raw JSON for one tag, with its provenance status shown first. |
 | **FINDINGS** | FINDINGS.md by section, protected keep-blocks marked, and `git diff` against the last commit, warning if anything above section 6 changed. |
 
 ### Score applicants (the home page)
 
-Drop a CSV of applicants on the home page and the app runs the whole flow by
-itself: checking the file, cleaning it exactly as the training pipeline does,
-scoring every row with the trained survival model, explaining the rejected ones
-with SurvSHAP(t), and writing finished files.
+Drop a CSV of applicants on the home page. Scoring runs in **two phases**, the same
+two functions for every caller (the page inline, background runs, and
+`06_score_upload.py`):
+
+1. **Decisions** ([`batch.score_file`](src/creditsurv/batch.py)): check the file,
+   clean it exactly as the training pipeline does, score every row, decide against
+   the threshold, check drift, and write and check the decision files. This takes
+   about 0.8 s per 1,000 rows, whatever the reject rate, so a 1.3M-row file takes
+   minutes, not hours. It explains nobody: every rejected row says
+   `explained = "reasons pending"`.
+2. **Reasons and notices** ([`phase2.explain_run`](src/creditsurv/phase2.py)):
+   SurvSHAP(t) for each rejected applicant, run in the background. The page shows
+   explained so far / total, the rate and the ETA. Reasons are written into
+   `rejected_applicants.csv` and the notice zip as they arrive. The run can be
+   interrupted and resumed with identical reasons.
+
+Up to `decision.explain_confirm_above` rejected applicants (default 1,000), Phase 2
+starts on its own. Above that, the page asks first: **explain all**, **a random
+sample of N**, or **skip**. The last two are stamped not for lending decisions, and
+skip writes no notices. **Explain this applicant** gives any pending row its reason
+and notice in a few seconds. The loaded model is cached across uploads and clicks,
+downloads read nothing until clicked, and *Open a previous run* reopens any run on
+disk.
 
 **Decision rule.** The model returns a probability, not a decision. The policy
 that turns one into the other lives in `decision:` in
@@ -175,30 +279,78 @@ in git) and as download buttons:
 |---|---|
 | `scored_applicants.csv` | every applicant: `pd_12m`, `pd_36m`, decision, threshold, top three reasons, data-quality flags |
 | `approved_applicants.csv` | approved rows only |
-| `rejected_applicants.csv` | rejected rows with up to four Regulation B reasons, their attributions, the internal fair-lending flag and the notice file name |
-| `adverse_action_notices.zip` | one formatted ECOA/Reg B notice per explained rejected applicant |
-| `run_summary.csv` | one row: file, row count, model tag and SHA-256, threshold, approval rate, feature coverage, timings |
-| `provenance.json` | the same provenance stamp the pipeline stages write |
+| `rejected_applicants.csv` | rejected rows with up to four Regulation B reasons, their attributions, the internal fair-lending flag and the notice file name (an operator file, not for applicants) |
+| `adverse_action_notices.zip` | one ECOA/Reg B notice per rejected applicant with a stated reason: **only** what the applicant is given, screened for internal content |
+| `internal/` | **never sent to applicants**: `internal_review_flags.csv` (fair-lending flag, non-disclosable drivers, the feature and attribution behind each reason) and `internal_review_records.jsonl` |
+| `validation_checks.csv` | pass/fail of the eight post-run checks (FINDINGS 7l) |
+| `run_summary.csv` | one row: file, row count, model tag, registry status and SHA-256, threshold, approval rate, fair-lending share, checks, feature coverage, timings |
+| `provenance.json` | the same provenance stamp the pipeline stages write; written only when every blocking check passed |
+
+**Only an approved model decides.** [config/models.yaml](config/models.yaml) records
+every trained model's features, training split, metrics, defects and status
+(`approved`, `candidate`, `benchmark`, `deprecated`). A run on a model that is not
+approved is refused, unless it is explicitly overridden (tick-box on the page, or
+`--allow-unapproved-model`). An overridden run is stamped **not for lending
+decisions** in every output and on every notice.
+
+**No model is approved yet.** The proposed scoring model, `full_applicant_nogeo`
+(set as `decision.model_tag`), is a **candidate**. Since its explainer validation
+(`03d`) finished on 2026-09-27, it passes all seven approval rules. SurvSHAP(t) agrees
+with itself on the top reason for 97.0% of applicants, with a top-4 overlap of 0.959,
+against bars of 90% and 0.85. It is still not approved: approval is a recorded
+sign-off by a named person (`07_model_registry.py approve`), and that has not happened.
+The earlier `full` model is deprecated: it was trained without a credit score
+(FINDINGS 7c), and it used `addr_state`, a non-disclosable feature that was among the
+top adverse drivers for 65% of its test-1 declines (FINDINGS 7l). Until
+approval, every scoring run, on the dashboard or from the command line, needs the
+explicit override and is stamped not for lending decisions. To see or change status:
+
+```bash
+python scripts/07_model_registry.py show
+python scripts/07_model_registry.py rules --model-tag full_applicant_nogeo
+python scripts/07_model_registry.py approve --model-tag full_applicant_nogeo --by NAME --findings 7l
+```
+
+`07_model_registry.py` reads JSON and YAML only, so it runs on Windows. Run it there
+after `run_linux.ps1 -CopyBack`, because `config/` is mirrored from Windows into WSL.
+
+**Every run checks itself.** After writing its files, a run reads them back and
+verifies counts, decisions against the threshold, 12- vs 36-month risk, reasons,
+disclosability, notice content and approval. A blocking failure withholds the
+notices and writes no `provenance.json`, so the run never shows as finished. The
+page shows the result in its Checks tab. It also shows the share of rejections
+whose top adverse drivers include a non-disclosable feature, and warns above
+`decision.fair_lending_review_share` (5%).
 
 **Large files.** An upload of `decision.background_above_mb` or more (default 25 MB)
 runs in a detached background process via [creditsurv.runner](src/creditsurv/runner.py)
 — the same machinery the pipeline page uses — so the browser can be closed and the
-run keeps going; the page tails its log and picks the finished result up from disk.
-Smaller files stay inline, because a background run reloads the model and its SHAP
-background from scratch (20–40 s) that the page already has cached. "Always run in
-the background" in the sidebar forces it either way. The same script works on its
-own:
+run keeps going; the page tails its log and picks the decisions up from disk.
+Smaller files stay inline, because a background run loads the model again (about
+3 s and a 3 GB peak) when the page already has it cached. "Always run in the
+background" in the sidebar forces it either way. Phase 2 always runs in the
+background. The same script works on its own:
 
 ```bash
-./.venv/Scripts/python.exe scripts/06_score_upload.py --file applicants.csv
-./.venv/Scripts/python.exe scripts/06_score_upload.py --file applicants.csv \
-    --model-tag holdout --threshold 0.25 --max-explained 500
-./.venv/Scripts/python.exe scripts/06_score_upload.py --file applicants.csv \
-    --chunk-rows 10000 --explainer auto        # less memory; faster reasons
+python scripts/06_score_upload.py --file applicants.csv       # both phases
+python scripts/06_score_upload.py --file big.csv --phase2 defer   # decisions only
+python scripts/06_score_upload.py --explain outputs/runs/<run>    # Phase 2: all
+python scripts/06_score_upload.py --explain outputs/runs/<run> --phase2 sample --sample-n 500
+python scripts/06_score_upload.py --explain outputs/runs/<run> --phase2 skip
+python scripts/06_score_upload.py --explain outputs/runs/<run> --row 17   # one applicant
 ```
 
+With the default `--phase2 auto`, a file with more than
+`decision.explain_confirm_above` rejected applicants stops after Phase 1 and prints
+these three choices.
+
+In WSL, the app notices when the Windows folder has newer code than it is running.
+It syncs and restarts by itself if no job is running and nothing is open in your
+session; otherwise it says so and offers a button. Finished runs are copied back to
+Windows automatically (newer files only; nothing is deleted).
+
 Exit codes: 0 finished, 2 bad arguments or missing input, 3 the file or the model was
-refused (the message says which and how to fix it). The upload cap is
+refused, or the run failed its own checks (the message says which and how to fix it). The upload cap is
 `server.maxUploadSize` in `.streamlit/config.toml`, currently 500 MB; note the file is
 held in memory as bytes and again as a DataFrame, so a file that size needs several GB
 of RAM.
@@ -219,15 +371,15 @@ one block together and in another separately may swap two near-tied reasons — 
 per-applicant instability FINDINGS already records. The block size is written into
 `run_summary.csv` and the provenance stamp for that reason.
 
-**Explanations are capped, and the shortfall is stated.** SurvSHAP(t) costs about
-2.7 s per applicant on the full model, so only *rejected* applicants are explained
-— approved rows never consume the budget — in file order, up to
-`decision.max_explained` (default 100). A rejected applicant past the cap is marked
-`reasons not generated: explanation cap reached (decision.max_explained=N)` in
-every output file, `run_summary.csv` carries `n_rejected_without_reasons`, and the
-dashboard shows that count in red with the time it would take to clear it. A
-declined applicant with no stated reasons is a compliance gap, so it is never a
-blank cell. A 25-row fixture with five notices finishes in about 9 seconds.
+**Any shortfall in explanations is stated.** SurvSHAP(t) costs about 2 s per
+applicant, so only *rejected* applicants are explained; approved rows never use the
+budget. By default every rejected applicant is explained (`decision.max_explained:
+0`, no cap). A rejected applicant who has no reason yet is never a blank cell: it
+reads `reasons pending` until Phase 2 reaches it, and `reasons not generated: …`
+when a sample, a skip, an explicit `--max-explained` cap or a stopped run left it
+out. `run_summary.csv` carries `n_rejected_without_reasons`, and the dashboard shows
+that count. A declined applicant with no stated reasons is a compliance gap, so a
+sample, a skip or an explicit cap is stamped not for lending decisions.
 
 What it does not do: it has no modelling code of its own, never passes
 `--overwrite` unless you tick it, and never writes FINDINGS.md except through
@@ -389,11 +541,21 @@ src/creditsurv/
   plan.py     the holdout stage commands (shared by run_holdout.ps1 and the UI)
   runner.py   background run + log + per-tag lock (UI)
   status.py   read-only stage status and overwrite pre-flight (UI)
-scripts/      00..05 one per stage, plus 01b EDA, 03b bootstrap, 06 batch scoring,
-              inspect_data.py, check_provenance.py
+  batch.py    scoring Phase 1: check, clean, score, decide, write the decision files
+  phase2.py   scoring Phase 2: reasons and adverse-action notices, resumable
+  run_checks.py     the post-run checks every scoring run must pass
+  registry.py       config/models.yaml: which models may make lending decisions
+  evidence_jobs.py  background 03d / 03e runs for a candidate model (registry page)
+  environment.py    detects the Smart App Control block and explains it
+  wsl_sync.py       keeps the WSL copy and Windows results in step
+scripts/      00..05 one per stage, plus 01b EDA, 02r/02s metrics and cleaning
+              values, 03b-03f explainer studies, 06 applicant scoring, 07 model
+              registry, inspect_data.py, check_provenance.py, wsl_launch.sh
 app/          Streamlit UI (app.py + views/), a thin layer over the scripts
-tests/        459 tests, synthetic fixtures only — no real data required
-outputs/      data/ models/ (gitignored)   figures/ tables/ (in git: the evidence)
+config/       config.yaml (paths, thresholds, decision rule), models.yaml (registry)
+tests/        synthetic fixtures only — no real data required
+outputs/      data/ models/ runs/ logs/ (gitignored)   figures/ tables/ eda/ (in git: the evidence)
+run_holdout.ps1, run_linux.ps1   one-command holdout run; start the app in WSL
 ```
 
 ## Two things worth knowing before reading results
