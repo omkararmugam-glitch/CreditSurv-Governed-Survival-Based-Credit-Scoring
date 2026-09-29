@@ -36,6 +36,7 @@ is a visible config change that invalidates the models rather than a silent drif
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -43,7 +44,8 @@ import numpy as np
 import pandas as pd
 
 __all__ = ["PARITY_VERSION", "CleaningPolicy", "CleaningValues", "CleaningReport",
-           "fit_values", "clean", "coerce_numeric", "policy_from_config"]
+           "fit_values", "clean", "coerce_numeric", "coerce_column",
+           "parse_term_months", "DuplicateTracker", "policy_from_config"]
 
 PARITY_VERSION = "v1-parity"
 """The rule set the current trained models were produced under."""
@@ -51,6 +53,13 @@ PARITY_VERSION = "v1-parity"
 NA_TOKENS: tuple[str, ...] = ("", "n/a", "N/A", "NA", "null", "NULL", "none", "None")
 """Same tokens the ingest reader treats as missing, so a value that was missing in
 training is missing when scoring."""
+
+DUPLICATE_RULES: dict[str, str] = {
+    "duplicate_row": "identical to an earlier row",
+    "duplicate_applicant_id": "repeating an earlier applicant ID with different values",
+}
+"""Rows removed when scoring so that no applicant is decided, or sent a notice,
+twice. Keys are the ``dropped_by_rule`` names in the cleaning report."""
 
 
 @dataclass(frozen=True)
@@ -161,6 +170,12 @@ class CleaningReport:
     dropped_by_rule: dict[str, int] = field(default_factory=dict)
     coerced_text: dict[str, int] = field(default_factory=dict)
     unreadable_numbers: dict[str, int] = field(default_factory=dict)
+    unreadable_examples: dict[str, list[str]] = field(default_factory=dict)
+    """Up to three raw values per column that could not be read, so a report of
+    "N unreadable" says what they looked like."""
+    missing_after: dict[str, int] = field(default_factory=dict)
+    """Per model feature present in the file: values missing once cleaned (blank in
+    the file, unreadable, or an unseen category). Read by the input-quality check."""
     imputed: dict[str, int] = field(default_factory=dict)
     clipped: dict[str, int] = field(default_factory=dict)
     out_of_range: dict[str, int] = field(default_factory=dict)
@@ -190,6 +205,11 @@ class CleaningReport:
             dropped_by_rule=add(self.dropped_by_rule, other.dropped_by_rule),
             coerced_text=add(self.coerced_text, other.coerced_text),
             unreadable_numbers=add(self.unreadable_numbers, other.unreadable_numbers),
+            unreadable_examples={
+                col: list(dict.fromkeys(self.unreadable_examples.get(col, [])
+                                        + other.unreadable_examples.get(col, [])))[:3]
+                for col in set(self.unreadable_examples) | set(other.unreadable_examples)},
+            missing_after=add(self.missing_after, other.missing_after),
             imputed=add(self.imputed, other.imputed),
             clipped=add(self.clipped, other.clipped),
             out_of_range=add(self.out_of_range, other.out_of_range),
@@ -209,8 +229,13 @@ class CleaningReport:
                              ("label_stage_dropped", self.label_stage_drops)):
             rows += [{"scope": "rows", "rule": rule, "column": k, "count": v}
                      for k, v in counts.items()]
+        rows += [{"scope": "values", "rule": "unreadable_number", "column": k,
+                  "count": v, "detail": "e.g. " + ", ".join(
+                      repr(x) for x in self.unreadable_examples.get(k, []))}
+                 for k, v in self.unreadable_numbers.items()]
         for rule, counts in (("text_coerced", self.coerced_text),
-                             ("unreadable_number", self.unreadable_numbers),
+                             ("missing_after_cleaning",
+                              {k: v for k, v in self.missing_after.items() if v}),
                              ("imputed", self.imputed),
                              ("clipped", self.clipped),
                              ("out_of_range_flagged", self.out_of_range),
@@ -232,12 +257,20 @@ class CleaningReport:
                        f"removed; {self.rows_out:,} were kept.")
         else:
             out.append(f"All {self.rows_in:,} rows were kept.")
+        dupes = {k: v for k, v in self.dropped_by_rule.items()
+                 if k in DUPLICATE_RULES and v}
+        if dupes:
+            out.append(f"{sum(dupes.values()):,} duplicate applicant row(s) were removed "
+                       f"({', '.join(f'{v:,} {DUPLICATE_RULES[k]}' for k, v in dupes.items())}"
+                       f"); each applicant is scored and decided once.")
         for col, n in sorted(self.coerced_text.items(), key=lambda kv: -kv[1])[:5]:
             out.append(f"{n:,} values in {col} were written as text (currency, "
-                       f"percentage or thousands separators) and were read as numbers.")
+                       f"percentage, thousands separators or a unit such as "
+                       f"'36 months') and were read as numbers.")
         for col, n in sorted(self.unreadable_numbers.items(), key=lambda kv: -kv[1])[:5]:
+            eg = ", ".join(repr(x) for x in self.unreadable_examples.get(col, []))
             out.append(f"{n:,} values in {col} could not be read as numbers and are "
-                       f"treated as missing.")
+                       f"treated as missing" + (f" (e.g. {eg})." if eg else "."))
         for col, n in sorted(self.imputed.items(), key=lambda kv: -kv[1])[:5]:
             out.append(f"{n:,} missing values in {col} were filled with the training "
                        f"median.")
@@ -259,15 +292,17 @@ class CleaningReport:
         return out
 
 
-def coerce_numeric(values: pd.Series, *, strip_text: bool = True) -> tuple[pd.Series, int]:
+def coerce_numeric(values: pd.Series, *, strip_text: bool = True,
+                   dtype: str = "float32") -> tuple[pd.Series, int]:
     """Text -> float32, the same way the ingest does it.
 
     Returns the converted series and how many values needed the text stripping
-    (they would have become missing without it).
+    (they would have become missing without it). ``dtype="float64"`` is for the
+    derivations, which have always computed in double precision.
     """
     if not strip_text or not (values.dtype == object or str(values.dtype) in
                               ("string", "string[python]")):
-        return pd.to_numeric(values, errors="coerce").astype("float32"), 0
+        return pd.to_numeric(values, errors="coerce").astype(dtype), 0
     text = values.astype("string").str.strip()
     text = text.mask(text.isin(NA_TOKENS))
     direct = pd.to_numeric(text, errors="coerce")
@@ -276,7 +311,95 @@ def coerce_numeric(values: pd.Series, *, strip_text: bool = True) -> tuple[pd.Se
                     .str.replace("$", "", regex=False))
     parsed = pd.to_numeric(stripped, errors="coerce")
     rescued = int((direct.isna() & parsed.notna()).sum())
+    return parsed.astype(dtype), rescued
+
+
+_TERM = re.compile(r"^(\d{1,3})(?:\.0+)?\s*(?:-?\s*(?:months?|mos?\.?|mths?|m))?$")
+"""A loan term in months: ``36``, ``36.0``, ``36 months``, ``36-month``, ``36 mo``.
+Matched against the stripped, lower-cased value, so case and padding never matter."""
+
+
+def parse_term_months(values: pd.Series) -> pd.Series:
+    """Loan term text -> months (float), each value read on its own.
+
+    A value that is not a term (``"three years"``, ``"36 weeks"``) becomes missing
+    by itself; it cannot take the rest of the column with it.
+    """
+    if not (values.dtype == object or str(values.dtype).startswith("string")):
+        return pd.to_numeric(values, errors="coerce").astype("float64")
+    text = values.astype("string").str.strip()
+    text = text.mask(text.isin(NA_TOKENS)).str.lower()
+    months = text.str.extract(_TERM, expand=False)
+    return pd.to_numeric(months, errors="coerce").astype("float64")
+
+
+COLUMN_PARSERS = {"term_months": parse_term_months}
+"""Numeric features whose values carry a unit. Every other numeric feature goes
+through :func:`coerce_numeric`."""
+
+
+def coerce_column(col: str, values: pd.Series, *,
+                  strip_text: bool = True) -> tuple[pd.Series, int]:
+    """:func:`coerce_numeric`, or the column's own parser if it has one.
+
+    Returns the float32 series and how many values were text that only the
+    stripping or the parser made readable (reported as ``text_coerced``).
+    """
+    parser = COLUMN_PARSERS.get(col)
+    if parser is None or not strip_text:
+        return coerce_numeric(values, strip_text=strip_text)
+    parsed = parser(values)
+    direct = pd.to_numeric(values, errors="coerce")
+    rescued = int((direct.isna() & parsed.notna()).sum())
     return parsed.astype("float32"), rescued
+
+
+class DuplicateTracker:
+    """Finds repeated applicants across every block of a file.
+
+    A row is a duplicate if it is identical to an earlier row, or if it repeats an
+    earlier applicant ID. The first occurrence is kept. The tracker remembers what
+    it has seen, so a duplicate is caught even when the two rows fall in different
+    blocks, and it holds one 64-bit hash per row rather than the rows themselves.
+    """
+
+    def __init__(self, id_column: str | None = None):
+        self.id_column = id_column
+        self._ids: set[str] = set()
+        self._rows: set[int] = set()
+        self.counts: dict[str, int] = {k: 0 for k in DUPLICATE_RULES}
+        self.examples: list[str] = []
+
+    def drop(self, block: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+        """``block`` without the rows already seen, and this block's counts."""
+        # Hash the text of each row, so a column read as int in one block and as
+        # float in another cannot make the same row look different.
+        hashes = pd.util.hash_pandas_object(
+            block.astype("string").fillna("\x00"), index=False).to_numpy()
+        ids = None
+        if self.id_column and self.id_column in block.columns:
+            ids = block[self.id_column].astype("string").str.strip()
+            ids = ids.mask(ids.isin(NA_TOKENS)).to_numpy()
+        keep = np.ones(len(block), dtype=bool)
+        counts = {k: 0 for k in DUPLICATE_RULES}
+        for i, h in enumerate(hashes):
+            app = ids[i] if ids is not None else None
+            has_id = app is not None and not pd.isna(app)
+            if h in self._rows:
+                keep[i] = False
+                counts["duplicate_row"] += 1
+            elif has_id and app in self._ids:
+                keep[i] = False
+                counts["duplicate_applicant_id"] += 1
+            else:
+                self._rows.add(h)
+            if has_id:
+                if not keep[i] and len(self.examples) < 5 and app not in self.examples:
+                    self.examples.append(str(app))
+                self._ids.add(app)
+        for k, v in counts.items():
+            self.counts[k] += v
+        return block.loc[keep], counts
 
 
 def fit_values(df: pd.DataFrame, spec, *, policy: CleaningPolicy | None = None,
@@ -293,7 +416,7 @@ def fit_values(df: pd.DataFrame, spec, *, policy: CleaningPolicy | None = None,
     for col in spec.numeric:
         if col not in df.columns:
             continue
-        v, _ = coerce_numeric(df[col])
+        v, _ = coerce_column(col, df[col])
         if not v.notna().any():
             continue
         values.ranges[col] = (float(v.quantile(lo_r)), float(v.quantile(hi_r)))
@@ -334,12 +457,17 @@ def clean(df: pd.DataFrame, spec, values: CleaningValues, *,
             rep.missing_columns.append(col)
             continue
         original = work[col]
-        numeric, rescued = coerce_numeric(original, strip_text=policy.coerce_numeric_text)
+        numeric, rescued = coerce_column(col, original,
+                                         strip_text=policy.coerce_numeric_text)
         if rescued:
             rep.coerced_text[col] = rescued
-        unreadable = numeric.isna() & original.notna()
+        # Per value: a blank or NA token is missing, not unreadable.
+        blank = original.astype("string").str.strip().isin(NA_TOKENS).fillna(False)
+        unreadable = numeric.isna() & original.notna() & ~blank
         if unreadable.any():
             rep.unreadable_numbers[col] = int(unreadable.sum())
+            rep.unreadable_examples[col] = [
+                str(x) for x in original[unreadable].astype(str).unique()[:3]]
         flags_bad.append(unreadable.rename(col))
 
         if policy.clip_numeric and col in values.clip_bounds:
@@ -355,6 +483,7 @@ def clean(df: pd.DataFrame, spec, values: CleaningValues, *,
             rep.out_of_range[col] = int(outside.sum())
         flags_out.append(outside.rename(col))
         work[col] = numeric
+        rep.missing_after[col] = int(numeric.isna().sum())
 
     # --------------------------------------------------------- categorical --
     for col in spec.categorical:
@@ -365,6 +494,7 @@ def clean(df: pd.DataFrame, spec, values: CleaningValues, *,
         levels = list(values.categories.get(col, []))
         if not levels or not policy.align_categories:
             work[col] = text.astype("category")
+            rep.missing_after[col] = int(work[col].isna().sum())
             flags_unseen.append(pd.Series(False, index=work.index, name=col))
             continue
 
@@ -388,6 +518,7 @@ def clean(df: pd.DataFrame, spec, values: CleaningValues, *,
         # Anything still outside the training levels becomes missing, which is
         # what the model does with an unknown level anyway -- but it is counted.
         work[col] = pd.Categorical(text, categories=levels)
+        rep.missing_after[col] = int(work[col].isna().sum())
 
     # ---------------------------------------------------------------- rows --
     if policy.drop_duplicate_ids and "id" in work.columns:

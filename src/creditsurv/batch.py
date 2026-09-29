@@ -75,10 +75,11 @@ import pandas as pd
 
 from . import drift as drift_mod
 from . import eda
-from .derive import FeatureCosts, derive_features, load_costs
+from .derive import DERIVATIONS, FeatureCosts, derive_features, load_costs
 from .schema_match import propose_mapping
-from .cleaning import (CleaningPolicy, CleaningReport, CleaningValues, clean,
-                       fit_values, policy_from_config)   # fit_values: never called
+from .cleaning import (DUPLICATE_RULES, CleaningPolicy, CleaningReport,
+                       CleaningValues, DuplicateTracker, clean, fit_values,
+                       policy_from_config)   # fit_values: never called
 # here -- imported so tests/test_cleaning_values_source.py can assert that scoring
 # does not fit cleaning values.
 from .config import Config
@@ -185,6 +186,8 @@ and to refuse writing a second run into one."""
 INTERNAL_DIR = "internal"
 """Sub-folder for material the applicant is never given: fair-lending flags,
 non-disclosable drivers, attributions, model details."""
+PARTIAL_SNAPSHOT = "PARTIAL_SNAPSHOT.txt"
+"""Put first in a bundle zipped while Phase 2 is unfinished."""
 INTERNAL_FLAGS = "internal_review_flags.csv"
 INTERNAL_RECORDS = "internal_review_records.jsonl"
 INTERNAL_README = (
@@ -500,11 +503,19 @@ def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
     rep.optional_missing = [c for c in missing if c not in required]
     rep.missing_core = list(rep.required_missing)
     rep.missing_optional = list(rep.optional_missing)
+    # A raw column that fed a derivation was used, whatever the fixed notes say.
+    fed = {}
+    for rule in DERIVATIONS:
+        if rule.feature in derived:
+            for c in rule.needs:
+                fed.setdefault(c, []).append(rule.feature)
     for col in work.columns:
         if col in expected or col == rep.id_column:
             continue
-        rep.ignored[col] = (rep.unused.get(col)
-                            or UNUSED_NOTE.get(col, "not a feature of the trained model"))
+        rep.ignored[col] = (
+            f"not a model feature itself; used to compute {', '.join(fed[col])}"
+            if col in fed else rep.unused.get(col)
+            or UNUSED_NOTE.get(col, "not a feature of the trained model"))
 
     if renames:
         rep.warnings.append(
@@ -726,6 +737,21 @@ def prepare(df: pd.DataFrame, ctx: ScoringContext
                     dm.X[col] = pd.Categorical(dm.X[col].astype("string").str.strip(),
                                                categories=list(levels))
     return dm.X, flags, report
+
+
+def input_quality_inputs(ctx: ScoringContext, report: ValidationReport) -> dict:
+    """What the input-quality check compares a run against: the limit, the model
+    features the file supplied (by name or by derivation), and each one's missing
+    share in the training rows the context holds."""
+    ref = ctx.reference
+    return {
+        "max_share": float(getattr(ctx.cfg.decision, "input_quality_max_share", 0.05)),
+        "features": list(report.present),
+        "train_missing": {c: float(ref[c].isna().mean()) for c in report.present
+                          if c in ref.columns and len(ref)},
+        "structural": [c for c in getattr(ctx.spec, "structural_missing", ())
+                       if c in report.present],
+    }
 
 
 def profile(df: pd.DataFrame, ctx: ScoringContext) -> dict:
@@ -1153,6 +1179,9 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
     row_offset = 0
     n_blocks = 0
     said_clean = said_score = said_profile = False
+    # One decision, and at most one notice, per applicant: repeats are removed
+    # before cleaning, across block boundaries too, and counted in the report.
+    duplicates = DuplicateTracker(report.id_column)
 
     def blocks():
         yield first
@@ -1163,6 +1192,15 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         block = block.reset_index(drop=True)
         block, _ = validate(block, ctx.spec, values=ctx.clean_values,
                             costs=costs, mapping=report.recognised or mapping)
+        n_read = len(block)
+        block, dropped = duplicates.drop(block)
+        block = block.reset_index(drop=True)
+        dropped = {k: v for k, v in dropped.items() if v}
+        if block.empty:
+            # Every row of this block repeated an earlier one: nothing to score.
+            gone = CleaningReport(rows_in=n_read, dropped_by_rule=dropped)
+            clean_report = gone if clean_report is None else clean_report.merge(gone)
+            continue
 
         # -------------------------------------------------------- clean ----
         if not said_clean:
@@ -1178,6 +1216,10 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
                 "Check that numeric columns contain numbers and that there are no "
                 "merged header rows."))
         timed("clean", time.perf_counter() - t_step)
+        block_report.rows_in = n_read
+        for rule, n in dropped.items():
+            block_report.dropped_by_rule[rule] = (
+                block_report.dropped_by_rule.get(rule, 0) + n)
         clean_report = (block_report if clean_report is None
                         else clean_report.merge(block_report))
         if not said_clean:
@@ -1341,13 +1383,15 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
     # ------------------------------------------------------------ checks --
     # Read back from disk, not from memory: the files are what leaves this run.
     say("files", "running", "checking the written outputs")
+    quality_inputs = input_quality_inputs(ctx, report)
     checks = verify_run(
         stamp_dir, n_rows_read=agg.n_rows, threshold=threshold,
         published_threshold=published, horizon_months=int(d.horizon_months),
         feature_names=feature_screen, model_approved=approval.approved,
         model_label=approval.message(), allow_unapproved=allow_unapproved_model,
         cap_note=CAP_NOTE, chunk_rows=chunk_rows,
-        notices_zip=stamp_dir / "__no_notices_yet__.zip")
+        notices_zip=stamp_dir / "__no_notices_yet__.zip",
+        input_quality=quality_inputs)
     files["validation_checks.csv"] = write_checks(
         checks, stamp_dir / "validation_checks.csv")
     blocking = blocking_failures(checks)
@@ -1364,6 +1408,11 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         "source_sha256": (file_fingerprint(input_copy).get("sha256")
                           if input_copy.exists() else None),
         "n_rows": agg.n_rows,
+        "n_rows_in_file": clean_report.rows_in,
+        "n_duplicates_removed": sum(duplicates.counts.values()),
+        "duplicates_removed_by_rule": "; ".join(
+            f"{k}={v}" for k, v in duplicates.counts.items() if v),
+        "duplicate_applicant_examples": "; ".join(duplicates.examples),
         "n_approved": agg.n_approved,
         "n_rejected": agg.n_rejected,
         "approval_rate": round(agg.n_approved / agg.n_rows, 4) if agg.n_rows else 0.0,
@@ -1476,6 +1525,8 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
             "explain_workers": int(getattr(d, "explain_workers", 0)) or None,
             "chunk_rows": chunk_rows,
             "allow_unapproved_model": bool(allow_unapproved_model),
+            # Phase 2 re-runs every check; the input-quality one needs these.
+            "input_quality": quality_inputs,
             "model_approved": approval.approved,
             "model_label": approval.message(),
             "design": design_meta, "background": bg_meta,
@@ -1512,8 +1563,14 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
             + ", ".join(c.name for c in blocking) + ".",
             "\n".join(lines),
             "Nothing from this run may be used. The checks are in "
-            "validation_checks.csv in the run folder; the failure is a defect to fix, "
-            "not a file to correct.", run_dir=stamp_dir)
+            "validation_checks.csv in the run folder. "
+            + ("input_quality is about the file: supply the missing or unreadable "
+               "values named in the Details (cleaning_report.csv shows examples) and "
+               "score it again. "
+               if any(c.name == "input_quality" for c in blocking) else "")
+            + ("Any other failed check is a defect to fix, not a file to correct."
+               if any(c.name != "input_quality" for c in blocking) else ""),
+            run_dir=stamp_dir)
 
     stamp = build_stamp(
         stage="batch_score",
@@ -1674,10 +1731,18 @@ def bundle_zip(result: BatchResult) -> bytes:
     """Every output file of one run, as a single in-memory ZIP, for the operator.
 
     The internal records keep their ``internal/`` folder inside the bundle, so they
-    stay separate from the applicant notices there too.
+    stay separate from the applicant notices there too. Zipped while Phase 2 is
+    unfinished, the bundle leads with ``PARTIAL_SNAPSHOT.txt`` saying how many
+    reasons are still pending: the files alone do not make that obvious.
     """
+    from .phase2 import snapshot, snapshot_note        # phase2 imports this module
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        snap = snapshot(result.run_dir)                 # read now, not at render
+        if snap["partial"]:
+            zf.writestr(PARTIAL_SNAPSHOT, snapshot_note(
+                snap, f"{datetime.now():%Y-%m-%d %H:%M:%S}"))
         for path in sorted(result.run_dir.iterdir()):
             if path.is_file():
                 zf.write(path, path.name)

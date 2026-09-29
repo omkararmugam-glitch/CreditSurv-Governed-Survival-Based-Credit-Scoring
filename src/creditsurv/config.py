@@ -221,6 +221,12 @@ class DecisionConfig:
     min_feature_coverage: float = 0.60
     """Below this share of the model's features present in the upload, the run is
     flagged as degraded everywhere it is reported."""
+    input_quality_max_share: float = 0.05
+    """The input-quality check fails the run if any model feature in the file is
+    unreadable for more than this share of rows, or missing for more than this
+    share *beyond* its missing rate in training (many bureau fields are blank for
+    most applicants by design). Decisions are not issued on inputs the model never
+    saw. Test 3 read term_months as unreadable for every row and passed."""
 
 
 @dataclass(frozen=True)

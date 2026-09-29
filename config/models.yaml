@@ -227,10 +227,9 @@ models:
         auc_12m: 0.7118
         auc_36m: 0.6388
   full_applicant_nogeo:
-    status: candidate
+    status: approved
     summary: 59 numeric + 5 categorical features
-    status_reason: 'Proposed default (FINDINGS 7i, 7k, 7l). All seven approval rules pass (2026-09-27);
-      not yet approved: awaiting sign-off with 07_model_registry.py approve.'
+    status_reason: approved 7l; every approval rule passed
     model_file: outputs/models/02_models_full_applicant_nogeo.pkl
     model_sha256: 406e440d52b5d136d9d0585e158f697b3e2b9dd9e2ec2e7657c3488b75fb86ec
     features:
@@ -335,6 +334,30 @@ models:
         ibs: 0.1005
         auc_12m: 0.7098
         auc_36m: 0.6103
+    approval:
+      rules_passed:
+      - A1_model_file
+      - A2_features
+      - A3_no_blocking_defect
+      - A4_cleaning_values
+      - A5_ablation
+      - A6_explainer_validation
+      - A7_explain_settings
+      approved_by: Omkar
+      approved_on: '2026-09-27'
+      approved_at: '2026-09-27T21:55:21+05:30'
+      findings_section: 7l
+      note: ''
+      explainers:
+      - survshap
+      explain_settings:
+      - - 600
+        - 100
+      evidence:
+        outputs/tables/02_metrics_full_applicant_nogeo.json: 4f1bb78d1a4425b6414f87a458a9d84952e4fa94b3d5f93d1ce7621379fa2e6a
+        outputs/models/02_cleaning_values_full_applicant_nogeo.json: aaffcb1add0d2c0f9efdc0d7007ffd54322224928990ac25c301bdcb95f33753
+        outputs/tables/03e_ablation_full_applicant_nogeo.json: 69d0d226b5b638495c6873299c3a3c7ef66eed1ac8fc1ab2b145b2ef119d864b
+        outputs/tables/03d_explainer_validation_explainer_full_applicant_nogeo.json: 0007ca0c48b1920f45685f2161c37c322dac842267a9c8ac9c2695af2bbc4b3c
   holdout:
     status: benchmark
     summary: 55 numeric + 6 categorical features

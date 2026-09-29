@@ -137,6 +137,25 @@ class TestPhase1:
 # ============================================================== Phase 2 ==
 
 class TestPhase2:
+    def test_results_are_copied_back_while_it_runs_not_only_at_the_end(
+            self, tmp_path, monkeypatch):
+        """Copied back only at the end, the Windows files kept Phase 1's "not started,
+        0 explained" for the whole of Phase 2 -- on a 1k file, fifty minutes of what
+        looked like Phase 2 never starting."""
+        from creditsurv import wsl_sync
+        cfg, ctx, res = _phase1(tmp_path)
+        states = []
+        monkeypatch.setattr(wsl_sync, "copy_back_soon",
+                            lambda *a, **k: states.append(
+                                read_progress(res.run_dir)["state"]))
+        monkeypatch.setattr(phase2, "_LAST_COPY_BACK", {})
+        explain_run(res.run_dir, cfg, model=ctx.model, model_path=ctx.model_path,
+                    checkpoint_seconds=0)
+        assert states[0] == "running", states           # a copy mid-run
+        assert len(states) >= 2                          # and the final one
+        # throttled: one per COPY_BACK_EVERY, not one per checkpoint
+        assert len(states) <= 3, states
+
     def test_progress_is_reported_and_reasons_fill_in_while_it_runs(self, tmp_path):
         cfg, ctx, res = _phase1(tmp_path)
         seen = []
@@ -208,6 +227,31 @@ class TestPhase2:
 
 
 # ======================================================== A3. the choice ==
+
+class TestFinishing:
+    def test_completed_is_finishing_until_the_final_files_are_written(self, tmp_path):
+        """explain_run marks itself completed before it rewrites the final files. In
+        that gap the page must not unlock the downloads on the last checkpoint's
+        files -- but a process that died there must not stay 'finishing' forever."""
+        import os
+        cfg, ctx, res = _phase1(tmp_path)
+        summary = dict(res.summary, phase2_state="running", n_reasons_pending=3)
+        status = res.run_dir / "phase2" / "status.json"
+        st = json.loads(status.read_text())
+        st.update(state="completed", pid=os.getpid(), done=st.get("n_rejected", 3))
+        status.write_text(json.dumps(st))
+        snap = phase2.snapshot(res.run_dir, summary)
+        assert snap["state"] == "finishing" and snap["partial"]
+
+        st.update(pid=2 ** 22 + 12345)                    # no such process
+        status.write_text(json.dumps(st))
+        assert phase2.snapshot(res.run_dir, summary)["state"] == "completed"
+
+        # Once the summary agrees, it is simply completed.
+        explain_run(res.run_dir, cfg, model=ctx.model, model_path=ctx.model_path)
+        snap = phase2.snapshot(res.run_dir)
+        assert snap["state"] == "completed" and not snap["partial"]
+
 
 class TestTheChoice:
     def test_above_the_threshold_phase2_waits_for_a_choice(self, tmp_path):
@@ -483,6 +527,62 @@ class TestDashboardPhases:
         explain_run(res.run_dir, cfg, model=ctx.model, model_path=ctx.model_path)
         at = _draw(res.run_dir, _yaml(tmp_path, cfg))
         assert any("Phase 2 finished" in s.value for s in at.success)
+
+    def test_downloads_taken_mid_phase2_say_they_are_partial(self, tmp_path):
+        """A zip downloaded while Phase 2 ran looked finished. The page, the button
+        and the zip itself must all say it is a snapshot, and the same download
+        after Phase 2 finishes must be the full result with no such marker."""
+        import os
+        cfg, ctx, res = _phase1(tmp_path)
+        n = res.summary["n_rejected"]
+        status = res.run_dir / "phase2" / "status.json"
+        st = json.loads(status.read_text())
+        st.update(state="running", pid=os.getpid(), done=1, target=n,
+                  rate_per_min=6.0, eta_seconds=240)
+        status.write_text(json.dumps(st))
+
+        # While Phase 2 runs, nothing can be downloaded: every button is disabled.
+        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        banner = " ".join(w.value for w in at.warning)
+        assert f"Phase 2 running: 1 of {n} explained, ~4 min remaining" in banner
+        assert "Downloads are disabled until it finishes" in banner
+        buttons = at.get("download_button")
+        assert buttons and all(b.proto.disabled for b in buttons)
+
+        # Stopped part-way: it will not finish on its own, so the partial files are
+        # downloadable again, and say what they are.
+        st.update(state="stopped")
+        status.write_text(json.dumps(st))
+        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        assert "partial snapshot" in " ".join(w.value for w in at.warning)
+        buttons = at.get("download_button")
+        assert not any(b.proto.disabled for b in buttons)
+        labels = [b.label for b in buttons]
+        assert "⬇ rejected_applicants.csv (partial)" in labels
+        assert any(lb.startswith("⬇ Download all (ZIP) — PARTIAL") for lb in labels)
+        st.update(state="running")
+        status.write_text(json.dumps(st))
+
+        with zipfile.ZipFile(io.BytesIO(batch.bundle_zip(res))) as zf:
+            note = zf.read(batch.PARTIAL_SNAPSHOT).decode("utf-8")
+        assert "PARTIAL SNAPSHOT" in note and f"1 of {n:,}" in note
+        assert f"{n - 1:,} still marked" in note
+
+        # Phase 2 finishes: the banner goes, the buttons and the zip are the full run.
+        explain_run(res.run_dir, cfg, model=ctx.model, model_path=ctx.model_path)
+        assert not phase2.snapshot(res.run_dir)["partial"]
+        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        assert not any("partial snapshot" in w.value for w in at.warning)
+        labels = [b.label for b in at.get("download_button")]
+        assert "⬇ Download all (ZIP)" in labels
+        assert not any("partial" in b.lower() for b in labels)
+        with zipfile.ZipFile(io.BytesIO(batch.bundle_zip(batch.load_result(
+                res.run_dir)))) as zf:
+            assert batch.PARTIAL_SNAPSHOT not in zf.namelist()
+            rejected = pd.read_csv(io.BytesIO(zf.read("rejected_applicants.csv")),
+                                   dtype=str, keep_default_na=False)
+        assert not (rejected["explained"] == REASONS_PENDING).any()
+        assert len(rejected) == n
 
 
 # ================================ the pipeline guard: one path, no bypass ==

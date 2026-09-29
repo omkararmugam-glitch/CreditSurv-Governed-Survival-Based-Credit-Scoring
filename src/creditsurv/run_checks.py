@@ -17,6 +17,9 @@ rejected_have_reasons_or_pending   every rejection has reasons, or says pending
 no_nondisclosable_stated_reason    no stated reason rests on geography or LC's score
 applicant_notices_clean            no notice carries internal content or a feature
 model_approved                     the model is approved in the registry
+input_quality                      no model feature is unreadable, or missing
+                                   beyond its training rate, for more than
+                                   decision.input_quality_max_share of rows
 =================================  ============================================
 
 A **blocking** failure stops the run: ``validation_checks.csv`` is written, the
@@ -43,8 +46,8 @@ from .explain.adverse_action import (MAX_PRINCIPAL_REASONS, NOT_DISCLOSABLE,
                                      find_internal_content)
 
 __all__ = ["CheckResult", "CHECK_DESCRIPTIONS", "verify_run", "write_checks",
-           "blocking_failures", "NO_REASON_NOTE", "PENDING_NOTES", "REASONS_PENDING",
-           "SKIPPED_NOTE", "OUTSIDE_SAMPLE_NOTE"]
+           "blocking_failures", "check_input_quality", "NO_REASON_NOTE",
+           "PENDING_NOTES", "REASONS_PENDING", "SKIPPED_NOTE", "OUTSIDE_SAMPLE_NOTE"]
 
 NO_REASON_NOTE = "pending manual review: no disclosable adverse reason"
 
@@ -75,6 +78,8 @@ CHECK_DESCRIPTIONS: dict[str, str] = {
                                        "score feature",
     "applicant_notices_clean": "no applicant notice contains internal content",
     "model_approved": "the model is approved in the registry",
+    "input_quality": "no model feature is unreadable, or missing beyond its training "
+                     "rate, for more than the allowed share of rows",
 }
 
 
@@ -113,8 +118,15 @@ def verify_run(run_dir: Path, *, n_rows_read: int, threshold: float,
                published_threshold: float, horizon_months: int, feature_names,
                model_approved: bool, model_label: str, allow_unapproved: bool,
                cap_note: str, chunk_rows: int = 50_000,
-               notices_zip: Path | None = None) -> list[CheckResult]:
-    """Every check, computed from the files in ``run_dir``."""
+               notices_zip: Path | None = None,
+               input_quality: dict | None = None) -> list[CheckResult]:
+    """Every check, computed from the files in ``run_dir``.
+
+    ``input_quality`` turns on the input-quality check: ``{"max_share": float,
+    "features": [model features present in the file], "train_missing": {feature:
+    missing share in training}, "structural": [features where blank is an
+    answer]}``. It is read against ``cleaning_report.csv``.
+    """
     run_dir = Path(run_dir)
     pd_h = f"pd_{int(horizon_months)}m"
     scored_path = run_dir / "scored_applicants.csv"
@@ -305,7 +317,73 @@ def verify_run(run_dir: Path, *, n_rows_read: int, threshold: float,
                                f"lending decisions", CHECK_DESCRIPTIONS["model_approved"]))
     else:
         out.append(_fail("model_approved", model_label))
+
+    # 9 ------------------------------------------------------------------
+    if input_quality is not None:
+        out.append(check_input_quality(run_dir / "cleaning_report.csv", **input_quality))
     return out
+
+
+def check_input_quality(report_path: Path, *, max_share: float, features,
+                        train_missing: dict | None = None,
+                        structural=()) -> CheckResult:
+    """Fail when a model feature was mostly unreadable or unexpectedly missing.
+
+    Two measures per feature, each against ``max_share``:
+
+    * unreadable: values present in the file that could not be read as the
+      feature's type. Nothing in training was unreadable, so any share above the
+      limit is a defect in the file or in the cleaning.
+    * missing beyond training: the share missing after cleaning, minus the share
+      missing in training. Many bureau fields are blank for most applicants by
+      design, so the raw missing share alone would fail every Lending Club file.
+      Not applied to ``structural`` features (FeatureSpec.structural_missing),
+      where a blank is itself an answer -- "never delinquent", "no revolving
+      line" -- that the model reads through a missing indicator. How often that
+      answer occurs is a distribution question, which the drift check reports:
+      the clean Test 1 baseline has mths_since_last_delinq blank for 79% of rows
+      against 51% in training.
+
+    Features absent from the file altogether are not judged here; the required /
+    optional rule (FINDINGS 7d) already decided whether the run may go ahead
+    without them.
+    """
+    report_path = Path(report_path)
+    if not report_path.exists():
+        return _fail("input_quality", f"{report_path.name} was not written")
+    rep = pd.read_csv(report_path, dtype={"column": str}, keep_default_na=False)
+    rows = rep.loc[rep["rule"] == "rows_out", "count"]
+    n = int(rows.iloc[0]) if len(rows) else 0
+    if n == 0:
+        return _ok("input_quality", "no rows were scored")
+
+    def counts(rule: str) -> dict[str, int]:
+        part = rep[rep["rule"] == rule]
+        return dict(zip(part["column"].astype(str), part["count"].astype(int)))
+
+    unreadable, missing = counts("unreadable_number"), counts("missing_after_cleaning")
+    train_missing = train_missing or {}
+    structural = set(structural or ())
+    problems, worst = [], 0.0
+    for col in features:
+        u = unreadable.get(col, 0) / n
+        excess = (0.0 if col in structural else
+                  missing.get(col, 0) / n - float(train_missing.get(col, 0.0)))
+        worst = max(worst, u, excess)
+        if u > max_share:
+            problems.append(f"{col}: {u:.0%} unreadable")
+        elif excess > max_share:
+            problems.append(f"{col}: {missing.get(col, 0) / n:.0%} missing vs "
+                            f"{float(train_missing.get(col, 0.0)):.0%} in training")
+    if problems:
+        return _fail("input_quality",
+                     f"{len(problems)} feature(s) over the {max_share:.0%} limit, so "
+                     f"decisions would rest on inputs the model did not get: "
+                     + "; ".join(problems[:6])
+                     + (f" and {len(problems) - 6} more" if len(problems) > 6 else ""))
+    return _ok("input_quality",
+               f"{len(list(features))} feature(s) checked over {n:,} rows; worst "
+               f"{worst:.1%}, limit {max_share:.0%}")
 
 
 def blocking_failures(results: list[CheckResult]) -> list[CheckResult]:

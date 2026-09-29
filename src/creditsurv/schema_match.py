@@ -132,7 +132,8 @@ def _as_numeric(values: pd.Series) -> pd.Series:
     stripped = (text.str.replace(",", "", regex=False)
                     .str.replace("%", "", regex=False)
                     .str.replace("$", "", regex=False)
-                    .str.replace(r"\s*months?\s*$", "", regex=True))
+                    .str.replace(r"\s*-?\s*months?\s*$", "", regex=True,
+                                 flags=re.IGNORECASE))
     return pd.to_numeric(stripped, errors="coerce")
 
 

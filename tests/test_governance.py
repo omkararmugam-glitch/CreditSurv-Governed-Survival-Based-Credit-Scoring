@@ -541,7 +541,7 @@ class TestRunChecks:
             "counts_add_up", "decisions_match_threshold", "threshold_is_published",
             "risk_12m_le_36m", "rejected_have_reasons_or_pending",
             "no_nondisclosable_stated_reason", "applicant_notices_clean",
-            "model_approved"}
+            "model_approved", "input_quality"}
         assert (checks["status"] == "PASS").all()
         assert finished.summary["validation_checks_passed"] is True
         assert finished.summary["run_status"] == "finished"
@@ -716,7 +716,7 @@ class TestDashboard:
         at = _render(geo_run.run_dir)
         text = " ".join(m.value for m in list(at.success) + list(at.error)
                         + list(at.info) + list(at.warning))
-        assert "Run checks: 8 of 8 passed" in text
+        assert "Run checks: 9 of 9 passed" in text
         assert "registry status **approved**" in text
         assert "Fair-lending review required" in text
         assert "NOT FOR LENDING" not in text
@@ -792,7 +792,7 @@ class TestCommandLine:
         code, _ = self._run(cli, tmp_path, monkeypatch, "approved")
         out = capsys.readouterr().out
         assert code == 0 and "NOT FOR LENDING" not in out
-        assert out.count("PASS ") == 8
+        assert out.count("PASS ") == 9
 
 
 # ============================================ every path, structurally ==

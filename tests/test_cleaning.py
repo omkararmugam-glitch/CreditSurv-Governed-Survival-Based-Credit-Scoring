@@ -240,3 +240,115 @@ def test_label_stage_drops_are_carried_into_the_report(values):
     _, report, _ = clean(training_frame(10), SPEC, values, label_audit=audit)
     assert report.label_stage_drops == {"excluded_status": 1234, "missing_term": 7}
     assert (report.to_frame()["rule"] == "label_stage_dropped").sum() == 2
+
+
+# ------------------------------------------------------ units, per-value reading --
+
+TERM_SPEC = FeatureSpec(numeric=("loan_amnt", "term_months", "int_rate"),
+                        categorical=(), structural_missing=())
+
+
+def _term_values():
+    train = pd.DataFrame({"loan_amnt": [5000.0, 12000.0, 20000.0, 8000.0],
+                          "term_months": [36.0, 60.0, 36.0, 60.0],
+                          "int_rate": [7.5, 12.0, 18.2, 9.9]})
+    return fit_values(train, TERM_SPEC)
+
+
+def test_term_with_mixed_case_and_padding_parses_through_the_upload_path():
+    """Test 3: a file's ``term`` column is renamed to term_months and arrives as
+    text. ' 36 months' and '36 MONTHS' read as 36, not as unreadable numbers."""
+    from creditsurv.batch import validate
+
+    upload = pd.DataFrame({
+        "loan_amnt": [5000.0] * 7,
+        "term": [" 36 months", " 60 months", "36 MONTHS", "60 Months", "36",
+                 "36-month", "  60 months  "],
+        "int_rate": ["8.19%", "9.37", "10%", "7.5", "12.0%", "11", "6.25"],
+    })
+    renamed, _ = validate(upload, TERM_SPEC)
+    assert "term_months" in renamed.columns
+    cleaned, report, flags = clean(renamed, TERM_SPEC, _term_values())
+
+    assert cleaned["term_months"].tolist() == [36, 60, 36, 60, 36, 36, 60]
+    assert report.unreadable_numbers == {}
+    assert report.coerced_text["term_months"] == 6    # all but the bare "36"
+    assert (flags["n_unreadable_numbers"] == 0).all()
+
+
+def test_one_bad_term_is_counted_alone_and_does_not_fail_the_column():
+    upload = pd.DataFrame({"loan_amnt": [5000.0] * 5,
+                           "term_months": [" 36 months", "three years", "60 MONTHS",
+                                           "36 weeks", None]})
+    cleaned, report, _ = clean(upload, TERM_SPEC, _term_values())
+    assert cleaned["term_months"].isna().tolist() == [False, True, False, True, True]
+    assert report.unreadable_numbers == {"term_months": 2}       # the blank is missing
+    assert set(report.unreadable_examples["term_months"]) == {"three years", "36 weeks"}
+    assert report.missing_after["term_months"] == 3
+    row = report.to_frame().query("rule == 'unreadable_number'").iloc[0]
+    assert "three years" in row["detail"]
+
+
+@pytest.mark.parametrize("raw, months", [
+    (" 36 months", 36), ("36 MONTHS", 36), ("60 Months", 60), ("36", 36),
+    ("36-month", 36), ("36.0", 36), ("60 mo", 60), ("", np.nan), ("n/a", np.nan),
+    ("thirty-six", np.nan), ("36 weeks", np.nan)])
+def test_term_parser_accepts_the_common_spellings(raw, months):
+    from creditsurv.cleaning import parse_term_months
+    got = parse_term_months(pd.Series([raw], dtype=object)).iloc[0]
+    assert (np.isnan(got) and np.isnan(months)) or got == months
+
+
+def test_int_rate_percent_is_coerced_and_reported_when_the_model_uses_it():
+    """Item 4 of Test 3: a feature written as '8.19%' is read as 8.19 and counted
+    as text_coerced. (The approved model does not use int_rate at all.)"""
+    upload = pd.DataFrame({"loan_amnt": [5000.0] * 3, "term_months": [36.0] * 3,
+                           "int_rate": ["8.19%", "9.37", "12%"]})
+    cleaned, report, _ = clean(upload, TERM_SPEC, _term_values())
+    np.testing.assert_allclose(cleaned["int_rate"], [8.19, 9.37, 12.0], rtol=1e-6)
+    assert report.coerced_text["int_rate"] == 2
+    assert ((report.to_frame()["rule"] == "text_coerced")
+            & (report.to_frame()["column"] == "int_rate")).any()
+
+
+# ----------------------------------------------------------- duplicate applicants --
+
+def test_duplicates_are_found_by_content_and_by_id_across_blocks():
+    from creditsurv.cleaning import DuplicateTracker
+
+    tracker = DuplicateTracker("applicant_id")
+    first = pd.DataFrame({"applicant_id": ["A1", "A2", "A1"],
+                          "loan_amnt": [5000, 7000, 5000]})       # A1 exact repeat
+    second = pd.DataFrame({"applicant_id": ["A2", "A3", "A3"],
+                           "loan_amnt": [9999.0, 3000.0, 3000.0]})  # A2 new values
+    kept1, c1 = tracker.drop(first)
+    kept2, c2 = tracker.drop(second)
+    assert kept1["applicant_id"].tolist() == ["A1", "A2"]
+    assert kept2["applicant_id"].tolist() == ["A3"]
+    assert c1 == {"duplicate_row": 1, "duplicate_applicant_id": 0}
+    assert c2 == {"duplicate_row": 1, "duplicate_applicant_id": 1}
+    assert tracker.counts == {"duplicate_row": 2, "duplicate_applicant_id": 1}
+
+
+def test_identical_rows_without_an_id_column_are_still_found():
+    from creditsurv.cleaning import DuplicateTracker
+
+    kept, counts = DuplicateTracker(None).drop(
+        pd.DataFrame({"loan_amnt": [1, 2, 1, 1], "dti": [5.0, 5.0, 5.0, 6.0]}))
+    assert len(kept) == 3 and counts["duplicate_row"] == 1
+
+
+def test_derivations_read_formatted_numbers_the_way_cleaning_does():
+    """Test 3: loan_amnt written '$12,425' made loan_to_income missing, because the
+    derivation read the raw column with a plain to_numeric."""
+    from creditsurv.derive import derive_features
+
+    raw = pd.DataFrame({"loan_amnt": ["$12,425", "5000"],
+                        "annual_inc": ["$62,125", "50000"],
+                        "int_rate": ["8.19%", "10"], "term": ["36 MONTHS", " 60 months"]})
+    out, derived, _ = derive_features(raw, ["loan_to_income", "installment",
+                                            "term_months"])
+    np.testing.assert_allclose(out["loan_to_income"], [0.2, 0.1])
+    assert out["term_months"].tolist() == [36.0, 60.0]
+    assert out["installment"].notna().all()
+    assert set(derived) == {"loan_to_income", "installment", "term_months"}

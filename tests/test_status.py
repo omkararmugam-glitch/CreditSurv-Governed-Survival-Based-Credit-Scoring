@@ -105,3 +105,26 @@ def test_figures_for_tag_exact_suffix(tmp_path):
     for n in ("02_km_x.png", "03_imp_x_strat.png", "02_km_xy.png"):
         (tmp_path / n).write_bytes(b"")
     assert [p.name for p in figures_for_tag(tmp_path, "x")] == ["02_km_x.png"]
+
+
+def test_findings_diff_ignores_line_endings(tmp_path):
+    import subprocess
+
+    from creditsurv.status import findings_diff
+
+    body = "# F\n\n## 1. a\n\nx\n\n## 6. holdout\n\ny\n"
+    (tmp_path / "FINDINGS.md").write_text(body, encoding="utf-8", newline="\n")
+    git = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True,  # noqa: E731
+                                    capture_output=True)
+    git("init", "-q")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "add", "FINDINGS.md")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "c")
+    (tmp_path / "FINDINGS.md").write_bytes(body.replace("\n", "\r\n").encode())
+    d = findings_diff(tmp_path)
+    assert d["available"] and not d["diff"] and not d["above_s6"]
+
+    (tmp_path / "FINDINGS.md").write_text(body.replace("x", "changed"), encoding="utf-8")
+    assert findings_diff(tmp_path)["above_s6"]
+    (tmp_path / "FINDINGS.md").write_text(body + "z\n", encoding="utf-8")
+    d = findings_diff(tmp_path)
+    assert d["diff"] and not d["above_s6"]

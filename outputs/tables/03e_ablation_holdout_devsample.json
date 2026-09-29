@@ -701,7 +701,7 @@
         "sha256": "a19de31b3c0452a456bffb46d76b1ae243a7cecdd24f9e29d58cf1cd38b3285a"
       },
       "model": {
-        "path": "outputs/models/02_models_holdout.pkl",
+        "path": "outputs/models/02_models_holdout_devsample.pkl",
         "exists": true,
         "bytes": 8506921,
         "mtime": "2026-09-22T14:03:10+00:00",
@@ -710,18 +710,18 @@
     },
     "outputs": {
       "result": {
-        "path": "outputs/tables/03e_ablation_holdout.json",
+        "path": "outputs/tables/03e_ablation_holdout_devsample.json",
         "exists": false
       },
       "features": {
-        "path": "outputs/tables/03e_ablation_features_holdout.csv",
+        "path": "outputs/tables/03e_ablation_features_holdout_devsample.csv",
         "exists": true,
         "bytes": 6661,
         "mtime": "2026-09-23T16:56:38+00:00",
         "sha256": "6d65f79d60b92949c1fdb070feb5433ef27132e8404658a4546a8fcded0fd3f8"
       },
       "groups": {
-        "path": "outputs/tables/03e_ablation_groups_holdout.csv",
+        "path": "outputs/tables/03e_ablation_groups_holdout_devsample.csv",
         "exists": true,
         "bytes": 2202,
         "mtime": "2026-09-23T16:56:38+00:00",
@@ -739,6 +739,16 @@
         "shap": "0.52.0",
         "lifelines": "0.30.3",
         "scipy": "1.16.2"
+      }
+    },
+    "renamed": {
+      "on": "2026-09-28",
+      "why": "Files renamed to *_holdout_devsample when 02_models_holdout.pkl was found to hold a 200k dev-sample model (FINDINGS 7d). Only the recorded paths were updated to the new names; every sha256 is the original one and still verifies.",
+      "paths": {
+        "outputs/models/02_models_holdout.pkl": "outputs/models/02_models_holdout_devsample.pkl",
+        "outputs/tables/03e_ablation_holdout.json": "outputs/tables/03e_ablation_holdout_devsample.json",
+        "outputs/tables/03e_ablation_features_holdout.csv": "outputs/tables/03e_ablation_features_holdout_devsample.csv",
+        "outputs/tables/03e_ablation_groups_holdout.csv": "outputs/tables/03e_ablation_groups_holdout_devsample.csv"
       }
     }
   },

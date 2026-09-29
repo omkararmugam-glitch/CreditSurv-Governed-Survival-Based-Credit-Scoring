@@ -22,7 +22,9 @@ import pandas as pd
 import streamlit as st
 
 from _common import ACCENT, APPROVE, MUTED, REJECT, rel
-from creditsurv.batch import CAP_NOTE, bundle_zip
+from _phase2_view import _fmt_seconds
+from creditsurv import phase2
+from creditsurv.batch import CAP_NOTE, PARTIAL_SNAPSHOT, bundle_zip
 from creditsurv.run_checks import REASONS_PENDING
 
 DRIFT_BOX = {"stable": st.success, "moderate": st.warning, "large": st.error,
@@ -63,6 +65,9 @@ def render_headline(result) -> None:
     charts, the profile or any file to be read in full."""
     s = result.summary
     scored = result.scored
+
+    # Above everything, for as long as it is true: these files are not final yet.
+    _phase2_banner(result.run_dir)
 
     # Said first and loudest: a run that may not be used to decide anything.
     if s.get("for_lending_decisions") is False:
@@ -334,8 +339,107 @@ def render_details(result) -> None:
                     tooltip=list(table.columns)), use_container_width=True)
             st.dataframe(table, hide_index=True, width="stretch", height=320)
 
-    # ---------------------------------------------------------- downloads --
+    _downloads(result)
+
+    with st.expander("Run details"):
+        st.json(s, expanded=False)
+        st.caption("Also written to the run folder as provenance.json, with SHA-256 "
+                   "hashes of the upload, the model and every output file.")
+
+
+# Phase 2 states that end on their own (or on the operator's choice in the panel
+# above): the downloads stay disabled until then, so no one saves a half-finished
+# file. A Phase 2 that stopped, failed or was skipped leaves the partial files
+# downloadable, clearly named -- otherwise the decisions could never be taken away.
+STILL_WORKING = ("running", "not started", "awaiting choice", "finishing")
+
+
+def _locked(snap: dict) -> bool:
+    return snap["partial"] and snap["state"] in STILL_WORKING
+
+
+def _partial_name(name: str, snap: dict) -> str:
+    """``rejected_applicants.csv`` -> ``rejected_applicants_PARTIAL_351_pending.csv``
+    while Phase 2 is unfinished, so a saved file says what it is."""
+    if not snap["partial"]:
+        return name
+    stem, dot, ext = name.rpartition(".")
+    return f"{stem}_PARTIAL_{snap['pending']}_pending{dot}{ext}"
+
+
+def _live(snap: dict):
+    """How often a Phase 2 view redraws itself: while something can change without
+    the operator doing anything, and not at all otherwise."""
+    return 3 if snap["state"] in ("running", "not started", "finishing") else None
+
+
+def _phase2_banner(run_dir) -> None:
+    """Stays at the top of the results for as long as the files are a partial
+    snapshot, with live counts; gone only once Phase 2 is done."""
+    snap = phase2.snapshot(run_dir)
+    if not snap["partial"]:
+        return
+
+    @st.fragment(run_every=_live(snap))
+    def banner():
+        now = phase2.snapshot(run_dir)
+        if not now["partial"]:
+            st.rerun(scope="app")                  # finished: redraw from the files
+        counts = f"{now['done']:,} of {now['target']:,} explained"
+        if now["state"] == "running":
+            eta = now["eta_seconds"]
+            head = (f"Phase 2 running: {counts}, "
+                    + (f"~{_fmt_seconds(eta)} remaining" if eta is not None
+                       else "estimating time remaining") + ".")
+        elif now["state"] == "not started":
+            head = f"Phase 2 starting: {counts}."
+        else:
+            head = f"Phase 2 {now['state']}: {counts}."
+        if _locked(now):
+            st.warning(f"**{head}** Downloads are disabled until it finishes: "
+                       f"{now['pending']:,} rejected applicants still say "
+                       f"\"{REASONS_PENDING}\" and have no notice yet. They switch on by "
+                       f"themselves once this banner is gone.",
+                       icon=":material/hourglass_top:")
+            return
+        st.warning(f"**{head}** Every download on this page is a **partial snapshot**: "
+                   f"{now['pending']:,} rejected applicants still say "
+                   f"\"{REASONS_PENDING}\" and have no notice yet. Decisions are "
+                   f"final.", icon=":material/hourglass_top:")
+
+    banner()
+
+
+def _downloads(result) -> None:
+    """The download buttons, named for what they hold at the moment they are
+    clicked: while Phase 2 runs they are redrawn with the live pending count."""
+    s = result.summary
+    snap = phase2.snapshot(result.run_dir)
+
+    @st.fragment(run_every=_live(snap) if snap["partial"] else None)
+    def downloads():
+        now = phase2.snapshot(result.run_dir)
+        if snap["partial"] and not now["partial"]:
+            st.rerun(scope="app")                  # finished: offer the full result
+        _download_buttons(result, s, now)
+
+    downloads()
+
+
+def _download_buttons(result, s, snap) -> None:
     st.subheader("Downloads")
+    locked = _locked(snap)
+    if locked:
+        st.info(f"**Downloads are disabled until Phase 2 finishes** "
+                f"({snap['done']:,} of {snap['target']:,} rejected applicants explained, "
+                f"{snap['pending']:,} to go). They switch on by themselves, with the "
+                f"complete files.", icon=":material/lock_clock:")
+    elif snap["partial"]:
+        st.warning(f"**Partial snapshot:** Phase 2 is {snap['state']} and "
+                   f"{snap['pending']:,} rejected applicants have no reasons yet. Files "
+                   f"downloaded now are named `..._PARTIAL_{snap['pending']}_pending` and "
+                   f"the ZIP carries `{PARTIAL_SNAPSHOT}`. These buttons switch to the "
+                   f"full result if Phase 2 is resumed and finishes.")
     labels = {
         "scored_applicants.csv": "Every applicant, with risk, decision and top reasons",
         "approved_applicants.csv": f"Approved only ({s['n_approved']:,} rows)",
@@ -362,17 +466,17 @@ def render_details(result) -> None:
             # A callable: the file is read when the button is clicked, not on
             # every rerun of the page.
             st.download_button(
-                f"⬇ {name}", (lambda p=path: p.read_bytes()),
-                file_name=name.rsplit("/", 1)[-1],
+                f"⬇ {name}" + (" (partial)" if snap["partial"] and not locked else ""),
+                (lambda p=path: p.read_bytes()),
+                file_name=_partial_name(name.rsplit("/", 1)[-1], snap),
                 mime="application/zip" if name.endswith(".zip") else "text/csv",
-                width="stretch", key=f"dl_{name}", on_click="ignore")
+                width="stretch", key=f"dl_{name}", on_click="ignore", disabled=locked)
             st.caption(label + f" · {path.stat().st_size / 1e6:,.1f} MB")
-    st.download_button("⬇ Download all (ZIP)", (lambda: bundle_zip(result)),
-                       file_name=f"{result.run_dir.name}.zip",
-                       mime="application/zip", type="primary", key="dl_all",
-                       on_click="ignore")
-
-    with st.expander("Run details"):
-        st.json(s, expanded=False)
-        st.caption("Also written to the run folder as provenance.json, with SHA-256 "
-                   "hashes of the upload, the model and every output file.")
+    st.download_button(
+        "⬇ Download all (ZIP)" + (f" — PARTIAL, {snap['pending']:,} reasons pending"
+                                  if snap["partial"] and not locked else ""),
+        (lambda: bundle_zip(result)),
+        file_name=(f"{result.run_dir.name}_PARTIAL_{snap['pending']}_reasons_pending.zip"
+                   if snap["partial"] else f"{result.run_dir.name}.zip"),
+        mime="application/zip", type="primary", key="dl_all", on_click="ignore",
+        disabled=locked)

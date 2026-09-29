@@ -166,22 +166,35 @@ def figures_for_tag(figures_dir: Path, tag: str) -> list[Path]:
 
 
 def findings_diff(root: Path) -> dict:
-    """``git diff FINDINGS.md`` against HEAD, with the wrapper's section-6 check:
-    any hunk starting above the committed ``## 6.`` heading touched sections 0-5."""
+    """FINDINGS.md against its last commit, with the wrapper's section-6 check: any
+    hunk starting above the committed ``## 6.`` heading touched sections 0-5.
+
+    The commit is read from the repository the file belongs to: in the WSL copy
+    that is the Windows folder it was synced from, since the copy's own ``.git``
+    is only as recent as the last sync. Line endings are ignored -- the copy
+    carries Windows CRLF, git stores LF -- so only a change of text counts."""
+    import difflib
     import subprocess
 
-    def git(*args):
-        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True,
-                           text=True, encoding="utf-8", errors="replace", timeout=30)
-        return r.stdout if r.returncode == 0 else None
+    from .wsl_sync import windows_source
 
-    diff = git("--no-pager", "diff", "--", "FINDINGS.md")
-    if diff is None:
+    repo = windows_source(root) or root
+    try:
+        r = subprocess.run(["git", "-c", "safe.directory=*", "-C", str(repo), "show",
+                            "HEAD:FINDINGS.md"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=30)
+        text = (Path(root) / "FINDINGS.md").read_text(encoding="utf-8")
+    except (OSError, subprocess.SubprocessError):
+        r, text = None, None
+    if r is None or r.returncode != 0 or text is None:
         return {"available": False, "diff": "", "above_s6": False, "h6": None}
-    head = git("show", "HEAD:FINDINGS.md") or ""
-    h6 = next((i for i, line in enumerate(head.splitlines(), 1)
-               if line.startswith("## 6. ")), None)
-    starts = [int(m.group(1)) for m in re.finditer(
-        r"^@@ -(\d+)", git("--no-pager", "diff", "-U0", "--", "FINDINGS.md") or "", re.M)]
+    head = r.stdout.replace("\r\n", "\n").splitlines()
+    now = text.replace("\r\n", "\n").splitlines()
+    h6 = next((i for i, line in enumerate(head, 1) if line.startswith("## 6. ")), None)
+    diff = "\n".join(difflib.unified_diff(head, now, "a/FINDINGS.md", "b/FINDINGS.md",
+                                          lineterm=""))
+    starts = [a + 1 for tag, a, _, _, _
+              in difflib.SequenceMatcher(None, head, now, autojunk=False).get_opcodes()
+              if tag != "equal"]
     return {"available": True, "diff": diff, "h6": h6,
             "above_s6": bool(h6) and any(s < h6 for s in starts)}

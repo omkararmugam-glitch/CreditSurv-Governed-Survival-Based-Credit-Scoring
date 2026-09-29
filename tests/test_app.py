@@ -29,6 +29,17 @@ def _run(page: str) -> AppTest:
     return at
 
 
+def _run_in_app(page: str) -> AppTest:
+    """A page opened through app.py, as a user reaches it: page links to other
+    pages resolve only inside the app's navigation."""
+    at = AppTest.from_file(str(PROJECT_ROOT / "app" / "app.py"), default_timeout=120)
+    at.run()
+    at.switch_page(f"views/{page}")
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
 def test_entrypoint_loads_home_page():
     at = AppTest.from_file(str(PROJECT_ROOT / "app" / "app.py"), default_timeout=120)
     at.run()
@@ -51,7 +62,7 @@ def test_header_says_where_the_app_runs():
 
 
 def test_run_page_defaults_are_safe():
-    at = _run("run.py")
+    at = _run_in_app("run.py")
     assert at.radio[0].value == "Small"
     assert at.checkbox[0].value is False                   # --overwrite off
     start = next(b for b in at.button if b.label == "Start run")
@@ -59,7 +70,7 @@ def test_run_page_defaults_are_safe():
 
 
 def test_run_page_refuses_primary_tag():
-    at = _run("run.py")
+    at = _run_in_app("run.py")
     at.text_input[0].set_value("full").run()
     assert any("Tag refused" in e.value for e in at.error)
     assert not any(b.label == "Start run" for b in at.button)
@@ -190,3 +201,54 @@ def test_dashboard_survives_a_run_with_no_rejections(tmp_path):
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("not produced" in str(c.value) for c in at.caption)
+
+
+# ------------------------------------------------ surviving a page change --
+
+class _FakeUpload:
+    def __init__(self, data: bytes, name="a.csv", file_id="f1"):
+        self._data, self.name, self.size, self.file_id = data, name, len(data), file_id
+
+    def getbuffer(self):
+        return memoryview(self._data)
+
+
+def test_held_upload_is_read_back_from_disk(tmp_path):
+    from _common import HeldUpload
+
+    held = HeldUpload(_FakeUpload(b"id,x\n1,2\n"), held_dir=tmp_path)
+    assert held.getvalue() == b"id,x\n1,2\n"
+    assert held.head(4) == b"id,x"
+    held.discard()
+    assert not held.path.exists()
+
+
+def test_options_come_back_after_the_page_was_left():
+    """Streamlit drops a page's widget keys when another page is shown; remember()
+    restores them from the copy keep() made."""
+    def page():
+        import streamlit as st
+        from _common import keep, remember
+
+        if st.session_state.get("_leave"):          # stands in for another page
+            st.session_state.pop("_leave")
+            st.session_state.pop("t", None)
+            st.stop()
+        remember("t", 0.25)
+        st.slider("t", 0.05, 0.60, step=0.01, key="t")
+        keep("t")
+
+    at = AppTest.from_function(page)
+    at.run()
+    at.slider[0].set_value(0.4).run()
+    at.session_state["_leave"] = True
+    at.run()
+    at.run()
+    assert at.slider[0].value == 0.4
+
+
+def test_run_page_follows_only_pipeline_runs():
+    at = _run_in_app("run.py")
+    for sb in at.selectbox:
+        if sb.label == "Run":
+            assert not any("explain" in o or "drifted" in o for o in sb.options)

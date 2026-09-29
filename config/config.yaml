@@ -99,6 +99,9 @@ decision:
   chunk_rows: 50000           # rows per block; peak memory follows this, not file size
   drift_min_rows: 500         # below this, drift is reported as 'too few rows'
   min_feature_coverage: 0.60
+  # Fail the run if a model feature in the file is unreadable for more than this
+  # share of rows, or missing for this much more than it was in training.
+  input_quality_max_share: 0.05
   # Share of rejections where a non-disclosable feature was a top adverse driver,
   # above which the dashboard asks for fair-lending review (FINDINGS 7l).
   fair_lending_review_share: 0.05

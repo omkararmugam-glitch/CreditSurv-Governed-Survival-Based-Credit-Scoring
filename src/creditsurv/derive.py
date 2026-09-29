@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .cleaning import coerce_numeric, parse_term_months
 from .provenance import PROJECT_ROOT
 
 __all__ = ["DERIVATIONS", "Derivation", "derive_features", "FeatureCosts",
@@ -56,6 +57,12 @@ class Derivation:
         return [c for c in self.needs if c not in set(columns)]
 
 
+def _num(df: pd.DataFrame, col: str) -> pd.Series:
+    """A raw column as float64, read the way cleaning reads it, so ``$12,425`` and
+    ``8.19%`` feed a derivation instead of silently becoming missing."""
+    return coerce_numeric(df[col], dtype="float64")[0]
+
+
 def _installment(df: pd.DataFrame) -> pd.Series:
     """Standard amortisation: P = L * i / (1 - (1+i)^-n), i the monthly rate.
 
@@ -63,13 +70,9 @@ def _installment(df: pd.DataFrame) -> pd.Series:
     monthly fraction. A zero rate degenerates to the straight division, which the
     formula cannot express.
     """
-    amount = pd.to_numeric(df["loan_amnt"], errors="coerce")
-    annual = pd.to_numeric(
-        df["int_rate"].astype("string").str.replace("%", "", regex=False),
-        errors="coerce")
-    term = pd.to_numeric(
-        df["term_months"].astype("string").str.extract(r"(\d+)", expand=False),
-        errors="coerce")
+    amount = _num(df, "loan_amnt")
+    annual = _num(df, "int_rate")
+    term = parse_term_months(df["term_months"])
     monthly = annual / 100.0 / 12.0
     with np.errstate(divide="ignore", invalid="ignore"):
         factor = 1.0 - np.power(1.0 + monthly, -term)
@@ -78,33 +81,47 @@ def _installment(df: pd.DataFrame) -> pd.Series:
 
 
 def _fico_midpoint(df: pd.DataFrame) -> pd.Series:
-    low = pd.to_numeric(df["fico_range_low"], errors="coerce")
-    high = pd.to_numeric(df["fico_range_high"], errors="coerce")
+    low = _num(df, "fico_range_low")
+    high = _num(df, "fico_range_high")
     return (low + high) / 2.0
 
 
 def _fico_high_from_low(df: pd.DataFrame) -> pd.Series:
     """Lending Club reports FICO in 4-point bands, so the top of the band is the
     bottom plus four. Exact for this data, and stated as an assumption."""
-    return pd.to_numeric(df["fico_range_low"], errors="coerce") + 4.0
+    return _num(df, "fico_range_low") + 4.0
 
 
 def _term_months(df: pd.DataFrame) -> pd.Series:
-    return pd.to_numeric(
-        df["term"].astype("string").str.extract(r"(\d+)", expand=False),
-        errors="coerce")
+    """The cleaning module's parser, so a term reads the same whether the file
+    called the column ``term`` or ``term_months``."""
+    return parse_term_months(df["term"])
 
 
 def _loan_to_income(df: pd.DataFrame) -> pd.Series:
-    amount = pd.to_numeric(df["loan_amnt"], errors="coerce")
-    income = pd.to_numeric(df["annual_inc"], errors="coerce").replace(0.0, np.nan)
+    amount = _num(df, "loan_amnt")
+    income = _num(df, "annual_inc").replace(0.0, np.nan)
     return amount / income
 
 
 def _installment_to_income(df: pd.DataFrame) -> pd.Series:
-    payment = pd.to_numeric(df["installment"], errors="coerce")
-    income = pd.to_numeric(df["annual_inc"], errors="coerce").replace(0.0, np.nan)
+    payment = _num(df, "installment")
+    income = _num(df, "annual_inc").replace(0.0, np.nan)
     return payment / (income / 12.0)
+
+
+def _emp_length_years(df: pd.DataFrame) -> pd.Series:
+    """The parser training uses, so '5 years' is 5.0 here exactly as it was there."""
+    from .features.encoders import parse_emp_length
+    return parse_emp_length(df["emp_length"])
+
+
+def _log_annual_inc(df: pd.DataFrame) -> pd.Series:
+    """As features.build.add_derived_features computes it: log1p of the income
+    clipped at zero, in float32."""
+    income = _num(df, "annual_inc")
+    return pd.Series(np.log1p(income.clip(lower=0).astype("float32")),
+                     index=df.index).astype("float32")
 
 
 # Order matters: a feature derived here can feed a later one, and derive_features
@@ -122,6 +139,10 @@ DERIVATIONS: tuple[Derivation, ...] = (
                "amount divided by annual income", _loan_to_income),
     Derivation("installment_to_income", ("installment", "annual_inc"),
                "instalment divided by monthly income", _installment_to_income),
+    Derivation("emp_length_years", ("emp_length",),
+               "years from an employment length like '5 years'", _emp_length_years),
+    Derivation("log_annual_inc", ("annual_inc",),
+               "log of annual income", _log_annual_inc),
 )
 
 

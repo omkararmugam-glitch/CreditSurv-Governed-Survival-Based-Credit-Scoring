@@ -777,3 +777,101 @@ def test_auto_picks_treeshap_when_the_booster_is_there(ctx, monkeypatch):
     assert batch.choose_explainer(ctx, "auto") == "treeshap"
     assert batch.choose_explainer(ctx, "treeshap") == "treeshap"
     assert batch.choose_explainer(ctx, "survshap") == "survshap"
+
+
+# ------------------------------------------------------- input quality, dupes --
+
+def test_a_mostly_unreadable_feature_fails_the_input_quality_gate(runs, cfg, ctx):
+    """Test 3 passed with term_months unreadable for every row. A feature the model
+    uses that is unreadable for more than decision.input_quality_max_share of rows
+    now fails the run, and no notices are produced."""
+    df = pd.read_csv(__import__("io").BytesIO(_upload()))
+    df["dti"] = df["dti"].astype(object)
+    df.loc[1:, "dti"] = "see attached"                    # 11 of 12 unreadable
+    with pytest.raises(BatchError) as err:
+        run_batch(df.to_csv(index=False).encode(), "a.csv", cfg, ctx=ctx,
+                  runs_dir=runs)
+    assert "input_quality" in err.value.message
+    checks = pd.read_csv(err.value.run_dir / "validation_checks.csv")
+    row = checks.set_index("check").loc["input_quality"]
+    assert row["status"] == "FAIL" and bool(row["blocking"])
+    assert "dti: 92% unreadable" in row["detail"]
+    assert not (err.value.run_dir / "provenance.json").exists()
+
+
+def test_a_clean_file_passes_the_input_quality_gate(runs, cfg, ctx):
+    res = run_batch(_upload(), "a.csv", cfg, ctx=ctx, runs_dir=runs)
+    row = res.checks.set_index("check").loc["input_quality"]
+    assert row["status"] == "PASS"
+
+
+def test_missing_at_the_training_rate_does_not_trip_the_gate(tmp_path):
+    """Bureau fields are often blank by design; only missingness *beyond* the
+    training rate counts against the limit."""
+    from creditsurv.run_checks import check_input_quality
+
+    path = tmp_path / "cleaning_report.csv"
+    pd.DataFrame([{"scope": "rows", "rule": "rows_out", "column": "", "count": 100},
+                  {"scope": "values", "rule": "missing_after_cleaning",
+                   "column": "mths_since_last_delinq", "count": 55},
+                  {"scope": "values", "rule": "missing_after_cleaning",
+                   "column": "dti", "count": 9}]).to_csv(path, index=False)
+    ok = check_input_quality(path, max_share=0.05,
+                             features=["mths_since_last_delinq", "dti"],
+                             train_missing={"mths_since_last_delinq": 0.52, "dti": 0.0})
+    assert ok.status == "FAIL" and "dti: 9% missing vs 0% in training" in ok.detail
+    assert "mths_since_last_delinq" not in ok.detail
+    ok = check_input_quality(path, max_share=0.10,
+                             features=["mths_since_last_delinq", "dti"],
+                             train_missing={"mths_since_last_delinq": 0.52})
+    assert ok.status == "PASS"
+
+
+def test_duplicate_applicants_are_scored_once_and_noticed_once(runs, cfg, ctx):
+    """Test 3 had 10 exact duplicate rows, each scored and decided twice. Repeats
+    by content or by applicant ID are removed, across block boundaries, and
+    counted; every applicant gets one decision and at most one notice."""
+    df = pd.read_csv(__import__("io").BytesIO(_upload()))
+    exact = df.iloc[[0, 5, 11]]                          # identical rows
+    same_id = df.iloc[[3]].assign(loan_amnt=99_999.0)    # same ID, other values
+    messy = pd.concat([df, exact, same_id], ignore_index=True)
+    res = run_batch(messy.to_csv(index=False).encode(), "d.csv", cfg, ctx=ctx,
+                    runs_dir=runs, chunk_rows=5, max_explained=0)
+
+    scored = pd.read_csv(res.files["scored_applicants.csv"], dtype={"applicant_id": str})
+    assert len(scored) == 12 and scored["applicant_id"].is_unique
+    assert res.summary["n_rows_in_file"] == 16
+    assert res.summary["n_duplicates_removed"] == 4
+    assert res.clean_report.dropped_by_rule["duplicate_row"] == 3
+    assert res.clean_report.dropped_by_rule["duplicate_applicant_id"] == 1
+    assert res.clean_report.rows_in == 16 and res.clean_report.rows_out == 12
+    # The kept A003 is the first one, not the later row with other values.
+    assert scored.set_index("applicant_id").loc["A003", "loan_amnt"] != 99_999.0
+    assert any("duplicate applicant row" in s for s in res.clean_report.plain_english())
+
+    rejected = pd.read_csv(res.files["rejected_applicants.csv"],
+                           dtype={"applicant_id": str})
+    notices = rejected["notice_file"].dropna().astype(str)
+    notices = notices[notices != ""]
+    assert notices.is_unique
+    assert rejected["applicant_id"].is_unique
+
+
+def test_structural_blanks_are_left_to_drift_but_unreadables_still_count(tmp_path):
+    from creditsurv.run_checks import check_input_quality
+
+    path = tmp_path / "cleaning_report.csv"
+    pd.DataFrame([{"scope": "rows", "rule": "rows_out", "column": "", "count": 100},
+                  {"scope": "values", "rule": "missing_after_cleaning",
+                   "column": "mths_since_last_delinq", "count": 80},
+                  {"scope": "values", "rule": "missing_after_cleaning",
+                   "column": "revol_util", "count": 20},
+                  {"scope": "values", "rule": "unreadable_number",
+                   "column": "revol_util", "count": 20}]).to_csv(path, index=False)
+    res = check_input_quality(path, max_share=0.05,
+                              features=["mths_since_last_delinq", "revol_util"],
+                              train_missing={"mths_since_last_delinq": 0.51},
+                              structural=["mths_since_last_delinq", "revol_util"])
+    assert res.status == "FAIL"
+    assert "revol_util: 20% unreadable" in res.detail
+    assert "mths_since_last_delinq" not in res.detail

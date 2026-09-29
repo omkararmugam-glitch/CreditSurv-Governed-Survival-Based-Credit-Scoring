@@ -7,13 +7,14 @@ background or, for one applicant, on demand. The same two functions serve
 """
 
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 
-from _common import (CONFIG_PATH, cached_context, cached_result, model_statuses,
-                     page_header, paths)
+from _common import (CONFIG_PATH, cached_context, cached_result, drop_upload,
+                     hold_upload, keep, model_statuses, page_header, paths, remember)
 from _dashboard import render
 from _phase2_view import render_phase2
 from creditsurv.batch import (PROVISIONAL_REQUIRED, RUNS_DIR, BatchError,
@@ -79,20 +80,29 @@ statuses = model_statuses(CONFIG, tuple(models),
 
 # Settings stay in the sidebar: the main area shows only the drop zone until a
 # file arrives.
+# Each option is kept across page changes (remember/keep): a threshold that fell
+# back to its default on return would change the run key and score the file again.
+OPTION_KEYS = ("opt_model", "opt_type", "opt_threshold", "opt_background", "opt_override")
+if remember("opt_model", d.model_tag) not in models:
+    st.session_state["opt_model"] = d.model_tag if d.model_tag in models else models[0]
+remember("opt_type", "discrete_hazard")
+remember("opt_threshold", float(d.reject_at_or_above))
+remember("opt_background", False)
+remember("opt_override", False)
 with st.sidebar:
     with st.expander("Options", expanded=False):
-        tag = st.selectbox("Model", models,
-                           index=models.index(d.model_tag) if d.model_tag in models else 0,
+        tag = st.selectbox("Model", models, key="opt_model",
                            format_func=lambda m: f"{m} — {statuses[m]}")
-        model_name = st.selectbox("Type", ["discrete_hazard", "cox"], index=0)
+        model_name = st.selectbox("Type", ["discrete_hazard", "cox"], key="opt_type")
         threshold = st.slider(f"Reject at {d.horizon_months}-month default probability",
-                              0.05, 0.60, float(d.reject_at_or_above), 0.01)
+                              0.05, 0.60, step=0.01, key="opt_threshold")
         force_bg = st.checkbox(
-            "Always run in the background", value=False,
+            "Always run in the background", key="opt_background",
             help=f"Uploads of {d.background_above_mb:.0f} MB or more always do. A "
                  f"background run survives leaving or refreshing this page.")
         st.caption(f"Defaults come from `decision:` in config/config.yaml. Phase 2 "
                    f"asks first above {d.explain_confirm_above:,} rejected applicants.")
+keep(*OPTION_KEYS)
 
 # Only an approved model decides. Anything else needs an explicit override, and
 # the run is then stamped "not for lending decisions" in every output.
@@ -104,7 +114,8 @@ if not approval.approved:
              icon=":material/gpp_bad:")
     allow_unapproved = st.checkbox(
         "Override: score with this unapproved model anyway. Every output and notice "
-        "will be stamped NOT FOR LENDING DECISIONS.", value=False)
+        "will be stamped NOT FOR LENDING DECISIONS.", key="opt_override")
+    keep("opt_override")
     if not allow_unapproved:
         st.caption("Pick an approved model under Options, or approve this one: "
                    f"`python scripts/07_model_registry.py rules --model-tag {tag}`.")
@@ -113,8 +124,19 @@ if abs(threshold - float(d.reject_at_or_above)) > 1e-12:
                f"{d.reject_at_or_above:.0%}; this run will be stamped not for lending "
                f"decisions.")
 
-up = st.file_uploader("Upload applicant dataset (CSV)", type=["csv", "txt"],
-                      accept_multiple_files=False)
+new = st.file_uploader("Upload applicant dataset (CSV)", type=["csv", "txt"],
+                       accept_multiple_files=False)
+# The uploader comes back empty after another page has been shown; the file it
+# held does not. It stays until another file is uploaded or it is cleared here.
+up = hold_upload(new)
+if up is not None and new is None:
+    c1, c2 = st.columns([4, 1], vertical_alignment="center")
+    c1.info(f"Working on **{up.name}** ({up.size / 1e6:,.1f} MB), uploaded earlier "
+            f"in this session. Upload another file above to replace it.",
+            icon=":material/description:")
+    if c2.button("Clear this file", width="stretch"):
+        drop_upload()
+        st.rerun()
 if up is None:
     st.caption(f"Decision rule in force: reject when the predicted "
                f"{d.horizon_months}-month default probability is "
@@ -143,7 +165,7 @@ if not approval.approved and not allow_unapproved:
 # column is never read as a feature because the software guessed quietly.
 try:
     ctx = cached_context(tag, model_name)
-    head = read_upload(up.getvalue()[: 2_000_000], up.name).head(500)
+    head = read_upload(up.head(2_000_000), up.name).head(500)
 except BatchError as exc:
     st.error(f"**{exc.message}**" + (f"\n\n{exc.fix}" if exc.fix else ""))
     with st.expander("Details"):
@@ -152,6 +174,23 @@ except BatchError as exc:
 
 proposal = propose_mapping(head, ctx.spec, values=ctx.clean_values)
 table = proposal.to_frame()
+# The editor loses its ticks when the page is left. Coming back, it starts from the
+# mapping confirmed last time for this file and model, not from the proposal, so
+# the run key -- and so the result on screen -- is the same one.
+mapping_key = (up.file_id, tag, model_name)
+confirmed_mappings = st.session_state.setdefault("confirmed_mappings", {})
+base = st.session_state.get("mapping_base")
+if base is None or base[0] != mapping_key:
+    base = st.session_state["mapping_base"] = (mapping_key, table)
+elif "mapping_editor" not in st.session_state and mapping_key in confirmed_mappings \
+        and not table.empty:
+    kept = confirmed_mappings[mapping_key]
+    table = table.assign(**{
+        "use it": table["uploaded column"].isin(kept),
+        "model feature": [kept.get(c, f) for c, f
+                          in zip(table["uploaded column"], table["model feature"])]})
+    base = st.session_state["mapping_base"] = (mapping_key, table)
+table = base[1]
 st.subheader("Columns")
 if table.empty:
     st.caption("Every column in this file already carries its model feature name.")
@@ -215,12 +254,12 @@ else:
                    f"will be scored without them."
                    + (f" Measured cost: {detail}" if detail else ""))
     st.caption(costs.rule_note())
-    st.session_state["confirmed_mapping"] = renamed
     if not st.checkbox("These columns are read correctly", value=not missing_required,
                        disabled=bool(missing_required)):
         st.stop()
+    confirmed_mappings[mapping_key] = renamed
 
-mapping = st.session_state.get("confirmed_mapping") or None
+mapping = confirmed_mappings.get(mapping_key) or None
 
 # ----------------------------------------------------------------- Phase 1 --
 # Keyed on Streamlit's own id for the upload, not a hash of its bytes: hashing a
@@ -240,8 +279,7 @@ if key not in runs:
         # created, so closing the tab does not stop it; the page only reads it.
         run_dir.mkdir(parents=True, exist_ok=True)
         saved = run_dir / f"input_{Path(up.name).name}"
-        with open(saved, "wb") as fh:
-            fh.write(up.getbuffer())
+        shutil.copyfile(up.path, saved)
         args = ["scripts/06_score_upload.py", "--file", str(saved),
                 "--run-dir", str(run_dir), "--model-tag", tag, "--model", model_name,
                 "--threshold", f"{threshold}", "--phase2", "defer"]

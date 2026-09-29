@@ -153,6 +153,38 @@ def test_a_derivation_says_what_it_would_have_needed():
     assert set(blocked["installment"]) == {"int_rate", "term_months"}
 
 
+def test_every_training_derivation_exists_at_upload_and_agrees():
+    """Training computes DERIVED_NUMERIC with add_derived_features; an upload goes
+    through DERIVATIONS. A feature in the first and not the second is reported
+    'missing' for a file that has its inputs (emp_length_years and log_annual_inc
+    were, from emp_length and annual_inc), so the two must cover the same features
+    and give the same values."""
+    from creditsurv.features.build import DERIVED_NUMERIC, add_derived_features
+
+    raw = pd.DataFrame({
+        "loan_amnt": [10000.0, 25000.0, 5000.0], "annual_inc": [52000.0, 0.0, np.nan],
+        "installment": [320.5, 810.0, 160.0], "fico_range_low": [660.0, 700.0, 745.0],
+        "fico_range_high": [664.0, 704.0, 749.0],
+        "emp_length": ["5 years", "< 1 year", None]})
+    trained = add_derived_features(raw)
+    uploaded, derived, blocked = derive_features(raw, DERIVED_NUMERIC)
+    assert set(DERIVED_NUMERIC) <= set(derived), (set(DERIVED_NUMERIC) - set(derived),
+                                                  blocked)
+    for feature in DERIVED_NUMERIC:
+        np.testing.assert_allclose(uploaded[feature].astype("float64"),
+                                   trained[feature].astype("float64"),
+                                   rtol=1e-6, err_msg=feature)
+
+
+def test_an_input_to_a_derivation_is_reported_as_used():
+    spec = FeatureSpec(numeric=["loan_amnt", "emp_length_years"], categorical=[])
+    df = pd.DataFrame({"loan_amnt": [10000.0], "emp_length": ["5 years"]})
+    _, rep = validate(df, spec)
+    assert "emp_length_years" in rep.derived
+    assert rep.ignored["emp_length"] == ("not a model feature itself; used to "
+                                         "compute emp_length_years")
+
+
 def test_derivations_never_invent_a_value():
     """Arithmetic on columns that are present, never a fill: all-missing inputs
     produce nothing rather than a number."""

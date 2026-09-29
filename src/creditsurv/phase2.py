@@ -203,6 +203,61 @@ def estimate_seconds(n: int, cfg) -> float:
     return n * float(getattr(cfg.decision, "explain_seconds_each", 2.1))
 
 
+UNFINISHED = ("running", "not started", "awaiting choice", "stopped", "failed",
+              "finishing")
+"""Phase 2 states in which the run's files are a partial snapshot: some rejected
+applicants still say "reasons pending"."""
+
+
+def snapshot(run_dir: Path, summary: dict | None = None) -> dict:
+    """Whether a run's files are final or a partial snapshot, read live.
+
+    One answer for the page's banner, the download names and the marker inside
+    the zip, so they cannot disagree about whether Phase 2 is done. ``pending`` is
+    target minus done while Phase 2 runs (the summary lags until a checkpoint),
+    otherwise the summary's own count.
+    """
+    prog = read_progress(Path(run_dir))
+    if summary is None:
+        prov = _read_json(Path(run_dir) / "provenance.json", {}) or {}
+        summary = prov.get("summary", {})
+    state = prog.get("state", "")
+    # explain_run marks itself completed, then rewrites the final files and the
+    # summary (which records that state). Until the summary agrees, the files on
+    # disk are the last checkpoint's: "finishing", not done. Only while the Phase 2
+    # process lives -- one that died mid-write is not left finishing forever.
+    if (state in ("completed", "skipped")
+            and summary.get("phase2_state") not in (None, state)
+            and _pid_alive(prog.get("pid"))):
+        state = "finishing"
+    n_rejected = int(summary.get("n_rejected", 0) or 0)
+    target = int(prog.get("target") or n_rejected)
+    done = int(prog.get("done") or 0)
+    pending = int(summary.get("n_reasons_pending", 0) or 0)
+    if state == "running":
+        pending = max(target - done, 0)
+    elif state in ("not started", "awaiting choice"):
+        pending = max(pending, n_rejected - done)
+    return {"state": state, "partial": bool(n_rejected) and (
+                state in UNFINISHED or pending > 0),
+            "done": done, "target": target, "pending": pending,
+            "rate_per_min": prog.get("rate_per_min"),
+            "eta_seconds": prog.get("eta_seconds") if state == "running" else None}
+
+
+def snapshot_note(snap: dict, when: str) -> str:
+    """The plain-text marker put in a partial download, so the file says it."""
+    return (f"PARTIAL SNAPSHOT -- NOT THE FINISHED RUN\n\n"
+            f"Taken {when} while Phase 2 (reasons and notices) was "
+            f"'{snap['state']}': {snap['done']:,} of {snap['target']:,} rejected "
+            f"applicants explained, {snap['pending']:,} still marked "
+            f"\"reasons pending\".\n\n"
+            f"Decisions (approve / reject) are final. Reasons, adverse-action notices, "
+            f"fair-lending flags and the run checks cover only the applicants "
+            f"explained so far. Download again once Phase 2 has finished for the "
+            f"complete result.\n")
+
+
 def pending_rows(run_dir: Path, limit: int = 500) -> pd.DataFrame:
     """Rejected rows still marked "reasons pending", for the page's picker."""
     path = Path(run_dir) / "rejected_applicants.csv"
@@ -608,6 +663,11 @@ def _rewrite(path: Path, fill, chunk_rows: int = 50_000) -> None:
     os.replace(tmp, path)
 
 
+COPY_BACK_EVERY = 60.0
+"""Seconds between copy-backs from Phase 2 checkpoints; the final one always goes."""
+_LAST_COPY_BACK: dict[str, float] = {}
+
+
 def materialize(run_dir: Path, *, final: bool = False,
                 phase2_seconds: float | None = None) -> Phase2Result:
     """Write Phase 2's results into the run's files.
@@ -793,7 +853,9 @@ def materialize(run_dir: Path, *, final: bool = False,
                 model_label=plan["model_label"],
                 allow_unapproved=bool(plan["allow_unapproved_model"]),
                 cap_note=CAP_NOTE, chunk_rows=chunk_rows,
-                notices_zip=zpath if zpath.exists() else run_dir / "__none__.zip")
+                notices_zip=zpath if zpath.exists() else run_dir / "__none__.zip",
+                # Absent from plans written before the check existed.
+                input_quality=plan.get("input_quality"))
             write_checks(checks, checks_path)
             blocking = blocking_failures(checks)
             if blocking and zpath.exists():
@@ -847,9 +909,13 @@ def materialize(run_dir: Path, *, final: bool = False,
             "The notices must not be sent. This is a defect to fix, not a file to "
             "correct.", run_dir=run_dir)
 
-    if final:
+    # In the WSL copy only: reasons to Windows. At the end, and at checkpoints on the
+    # way, so the Windows files say "running, N explained" instead of keeping Phase
+    # 1's "not started, 0 explained" until the last applicant is done.
+    if final or time.time() - _LAST_COPY_BACK.get(str(run_dir), 0.0) >= COPY_BACK_EVERY:
         from .wsl_sync import copy_back_soon
-        copy_back_soon()              # in the WSL copy only: reasons to Windows
+        copy_back_soon()
+        _LAST_COPY_BACK[str(run_dir)] = time.time()
     small = len(issued) <= 5_000
     return Phase2Result(
         run_dir=run_dir, summary=s, checks=checks, aggregates=agg, files=files,

@@ -81,6 +81,75 @@ def cached_result(run_dir):
     return _cached_result(str(run_dir), prov.stat().st_mtime_ns if prov.exists() else 0)
 
 
+# ------------------------------------------- what survives leaving the page --
+# Streamlit forgets a page's widgets -- the uploader's file included -- as soon as
+# another page is shown. The upload and the choices made around it are therefore
+# kept in session state here, so coming back shows the same file and result.
+
+HELD_DIR = PROJECT_ROOT / "outputs" / "runs" / "_uploads"
+
+
+class HeldUpload:
+    """An upload copied to disk once, read back on every rerun. Offers the parts of
+    Streamlit's UploadedFile the page uses, without keeping a 450 MB file in memory
+    for as long as the session lasts."""
+
+    def __init__(self, up, held_dir: Path = HELD_DIR):
+        import re
+
+        self.name, self.size, self.file_id = up.name, up.size, up.file_id
+        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{up.file_id}_{Path(up.name).name}")
+        held_dir.mkdir(parents=True, exist_ok=True)
+        self.path = held_dir / safe[:120]
+        with open(self.path, "wb") as fh:
+            fh.write(up.getbuffer())
+
+    def getvalue(self) -> bytes:
+        return self.path.read_bytes()
+
+    def head(self, n: int) -> bytes:
+        with open(self.path, "rb") as fh:
+            return fh.read(n)
+
+    def discard(self) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+def hold_upload(up) -> "HeldUpload | None":
+    """The file this session is working on: a new upload replaces the held one
+    (and deletes its copy); no upload keeps what was held."""
+    held = st.session_state.get("held_upload")
+    if up is not None and (held is None or held.file_id != up.file_id
+                           or not held.path.exists()):
+        if held is not None:
+            held.discard()
+        held = st.session_state["held_upload"] = HeldUpload(up)
+    return held
+
+
+def drop_upload() -> None:
+    held = st.session_state.pop("held_upload", None)
+    if held is not None:
+        held.discard()
+    st.session_state.pop("mapping_base", None)
+
+
+def remember(key: str, default=None):
+    """Give widget ``key`` back the value it had before the page was left. Call it
+    before drawing the widget (which then reads st.session_state[key]), and
+    :func:`keep` after, which copies the value into a key Streamlit does not clear."""
+    shadow = f"_kept_{key}"
+    if key not in st.session_state:
+        st.session_state[key] = st.session_state.get(shadow, default)
+    return st.session_state[key]
+
+
+def keep(*keys: str) -> None:
+    for k in keys:
+        if k in st.session_state:
+            st.session_state[f"_kept_{k}"] = st.session_state[k]
+
+
 def page_header(title: str, subtitle: str = "") -> None:
     """The identity every page shares, above its own content.
 
@@ -136,7 +205,8 @@ def code_freshness(root: Path = PROJECT_ROOT, restart=None) -> None:
     source = windows_source(root)
     if source is None:
         return
-    open_work = bool(st.session_state.get("upload_runs") or st.session_state.get("open_run"))
+    open_work = bool(st.session_state.get("upload_runs") or st.session_state.get("open_run")
+                     or st.session_state.get("held_upload"))
     note_session(_session_id(), open_work, root)
     try:
         note = json.loads((root / "outputs" / "logs" / "last_code_sync.json")
