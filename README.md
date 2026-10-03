@@ -636,3 +636,5 @@ columns fail closed, and `assert_no_leakage` runs on every feature matrix.
 partly predicting Lending Club's underwriter instead of default, and it makes
 adverse-action reasons circular — "your grade was low" is not a permissible
 ECOA/Reg B reason. They are retained for a `with_lc_grade` benchmark variant.
+#   C r e d i t S u r v - G o v e r n e d - S u r v i v a l - B a s e d - C r e d i t - S c o r i n g  
+ 
