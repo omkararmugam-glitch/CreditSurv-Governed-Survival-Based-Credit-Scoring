@@ -1,0 +1,105 @@
+{
+  "applicant_id": "APP-000035",
+  "decision": "declined",
+  "notice_date": "2026-09-27",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.9905143816762585,
+  "horizon_months": 36,
+  "notice_status": "notice issued",
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "reason": "Number of accounts opened recently",
+      "attribution": -0.120513,
+      "feature_value": 9.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "inq_last_6mths",
+      "reason": "Number of recent inquiries on credit bureau report",
+      "attribution": -0.117424,
+      "feature_value": 2.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "total_rev_hi_lim",
+      "reason": "Amount of revolving credit available",
+      "attribution": -0.116453,
+      "feature_value": 3300.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 4,
+      "feature": "mths_since_last_major_derog_missing",
+      "reason": "Recency of a serious derogatory credit item",
+      "attribution": -0.070271,
+      "feature_value": 1,
+      "direction_consistent": true
+    }
+  ],
+  "top_adverse_drivers": [
+    {
+      "rank": 1,
+      "feature": "installment",
+      "attribution": -0.135199,
+      "disclosable": true
+    },
+    {
+      "rank": 2,
+      "feature": "acc_open_past_24mths",
+      "attribution": -0.120513,
+      "disclosable": true
+    },
+    {
+      "rank": 3,
+      "feature": "inq_last_6mths",
+      "attribution": -0.117424,
+      "disclosable": true
+    },
+    {
+      "rank": 4,
+      "feature": "total_rev_hi_lim",
+      "attribution": -0.116453,
+      "disclosable": true
+    },
+    {
+      "rank": 5,
+      "feature": "mo_sin_old_rev_tl_op",
+      "attribution": -0.111265,
+      "disclosable": true
+    },
+    {
+      "rank": 6,
+      "feature": "mths_since_last_major_derog_missing",
+      "attribution": -0.070271,
+      "disclosable": true
+    },
+    {
+      "rank": 7,
+      "feature": "dti",
+      "attribution": -0.064853,
+      "disclosable": true
+    },
+    {
+      "rank": 8,
+      "feature": "addr_state",
+      "attribution": -0.060434,
+      "disclosable": false
+    }
+  ],
+  "excluded_helpful_features": [
+    "num_actv_bc_tl",
+    "tot_cur_bal",
+    "delinq_2yrs",
+    "mths_since_last_delinq",
+    "tot_coll_amt"
+  ],
+  "fair_lending_flags": [
+    "addr_state"
+  ],
+  "top_driver_not_disclosable": false
+}

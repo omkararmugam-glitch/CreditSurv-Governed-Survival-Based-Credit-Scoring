@@ -9,10 +9,12 @@ of the app from a Linux one.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 import tomllib
 
 import pytest
@@ -126,10 +128,111 @@ def test_the_launcher_serves_headless_on_all_interfaces_and_never_ships_the_venv
     assert ".venv" not in re.findall(r"for d in ([^;]+); do", sh)[0]
 
 
+# --------------------------------------------------- starting things detached ---
+
+def _detach_helper() -> str:
+    """The launcher's detach() function on its own, to run in a test shell."""
+    sh = (PROJECT_ROOT / "scripts" / "wsl_launch.sh").read_text(encoding="utf-8")
+    found = re.search(r"^detach\(\) \{\n.*?^\}", sh, re.S | re.M)
+    assert found, "scripts/wsl_launch.sh has no detach() helper"
+    return found.group(0)
+
+
+def test_the_launcher_starts_nothing_in_the_background_except_through_detach():
+    """A bare ``cmd &`` leaves the job in this script's own process group -- the
+    foreground group of the terminal wsl.exe gave it -- and the kernel hangs that
+    group up the moment the script exits. ``setsid cmd &`` is no better by itself:
+    it moves the job out only once it has run, and the shell exits in the same
+    instant it forks, so the hangup can arrive first. That is how starting the API
+    left no process and an empty log. Only detach() waits for the job to report
+    from its new session, so every background start goes through it.
+    """
+    sh = (PROJECT_ROOT / "scripts" / "wsl_launch.sh").read_text(encoding="utf-8")
+    outside = sh.replace(_detach_helper(), "")
+    backgrounded = [line for line in outside.splitlines()
+                    if re.search(r"(?<!&)&\s*$", line)
+                    and not line.lstrip().startswith("#")]
+    assert backgrounded == [], backgrounded
+    # nohup only makes the job ignore SIGHUP, and not before it has started: it
+    # leaves the job in the dying session and has the same race. (The comments in
+    # the script say so, hence only the code is looked at here.)
+    code = [line for line in sh.splitlines() if not line.lstrip().startswith("#")]
+    assert [line for line in code if "nohup" in line] == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a pty and sessions are POSIX")
+def test_a_detached_job_outlives_the_launcher_and_its_terminal(tmp_path):
+    """The reported failure, reproduced and pinned.
+
+    ``wsl.exe -e bash scripts/wsl_launch.sh`` makes the launcher the session leader
+    of a fresh pty. When it returns, the kernel hangs that pty's foreground group
+    up -- and a job started with ``setsid cmd &`` is still in that group while its
+    setsid() has not run yet, which is the case when the shell exits in the same
+    instant it forks. The job then died before its first line of output: nothing in
+    ps, an empty log, immediately.
+
+    Driven through a real pty here, because with no controlling terminal there is
+    no hangup to survive and the test would pass either way. ``setsid --ctty`` does
+    what wsl.exe does -- new session, that pty as its controlling terminal -- and,
+    unlike ``pty.spawn``, forks no copy of this test process.
+    """
+    marker, log, done, out = (tmp_path / name for name in
+                              ("job.pid", "job.log", "job.done", "launcher.out"))
+    launcher = tmp_path / "launcher.sh"
+    launcher.write_text(
+        "set -euo pipefail\n"
+        + _detach_helper() + "\n"
+        + """job='echo running; sleep 3; echo finished > "$1"'\n"""
+        + 'detach "%s" "%s" bash -c "$job" job "%s" > "%s"\n'
+          % (marker, log, done, out),
+        encoding="utf-8")
+
+    # The launcher starts the job and returns at once: the failing case exactly.
+    master, slave = os.openpty()
+    try:
+        started = subprocess.Popen(["setsid", "--ctty", "bash", str(launcher)],
+                                   stdin=slave, stdout=slave, stderr=slave)
+        os.close(slave)
+        assert started.wait(timeout=60) == 0, "the launcher itself failed"
+    finally:
+        os.close(master)
+
+    pid = int(out.read_text(encoding="utf-8").strip())
+    try:
+        session = os.getsid(pid)
+    except ProcessLookupError:                 # the symptom that was reported
+        wrote = (log.read_text(encoding="utf-8") if log.exists()
+                 else "<the log was never even created>")
+        raise AssertionError(
+            f"pid {pid} is already gone: the job was hung up along with the "
+            f"launcher that started it, and wrote {wrote!r}") from None
+    assert session == pid, f"pid {pid} is still in the launcher's session"
+
+    for _ in range(100):
+        if done.exists():
+            break
+        time.sleep(0.1)
+    assert done.read_text(encoding="utf-8").strip() == "finished", \
+        "the job did not outlive the launcher that started it"
+    assert "running" in log.read_text(encoding="utf-8"), \
+        "the job wrote nothing to its log"
+
+
+def test_the_detached_modes_are_offered_and_documented():
+    """The two starts that were being hand-rolled with setsid, and lost: the API in
+    the background, and one long script (03d) in the background."""
+    sh = (PROJECT_ROOT / "scripts" / "wsl_launch.sh").read_text(encoding="utf-8")
+    for mode in ("api-bg", "run-bg"):
+        assert f"    {mode})" in sh, f"no {mode} mode"
+        assert f"#   {mode}" in sh, f"{mode} is missing from the usage comment"
+    assert "api-bg" in sh.split("unknown mode")[1]
+
+
 def test_the_windows_half_frees_the_port_but_not_the_wsl_forwarder():
     path = PROJECT_ROOT / "run_linux.ps1"
     if not path.exists():
         pytest.skip("run_linux.ps1 is Windows-only and is not synced into WSL")
     ps1 = path.read_text(encoding="utf-8")
-    assert "Get-NetTCPConnection -LocalPort $Port" in ps1
+    # Both ports: the dashboard's and the API's.
+    assert "Get-NetTCPConnection -LocalPort @($Port, $ApiPort)" in ps1
     assert "wslrelay" in ps1          # WSL's forwarder must never be stopped

@@ -108,13 +108,14 @@ def test_the_check_does_not_raise_on_a_package_that_explodes(monkeypatch):
 
 
 @pytest.mark.parametrize("path,needle", [
-    ("app/app.py", "policy_block_message"),
+    ("src/creditsurv/api/app.py", "policy_block_message"),
+    ("app/views/_common.py", "blocked_message"),
     ("src/creditsurv/batch.py", "policy_blocked_exception"),
     ("scripts/06_score_upload.py", "policy_block_message"),
 ])
 def test_every_scoring_entry_point_explains_itself(path, needle):
-    """The three ways a model gets loaded: the page, the library, the CLI. The page
-    and the CLI check up front, because they can say so before any work starts;
+    """The ways a model gets loaded: the API (whose explanation every dashboard page
+    shows), the library, the CLI. The API and the CLI check up front, because they can say so before any work starts;
     load_context translates the failure instead, so a model with no native library
     in it is never refused for a library it does not use."""
     import pathlib

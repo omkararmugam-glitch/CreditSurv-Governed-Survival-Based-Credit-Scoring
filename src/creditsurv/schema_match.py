@@ -32,12 +32,20 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-__all__ = ["SYNONYMS", "FEATURE_CONTENT", "Candidate", "ColumnMatch",
-           "MappingProposal", "propose_mapping", "normalise"]
+from .derive import DERIVATIONS
 
-# Fixed, reviewable synonyms. Keys are normalised upload names, values are model
-# features. Anything not here still has a chance through name similarity and content.
-SYNONYMS: dict[str, str] = {
+__all__ = ["SYNONYMS", "FEATURE_CONTENT", "Candidate", "ColumnMatch",
+           "MappingProposal", "propose_mapping", "normalise", "rename_targets"]
+
+# Fixed, reviewable synonyms. Keys are normalised upload names, values are the
+# column the name means -- a model feature, or a raw column a derivation reads (see
+# rename_targets below). A value may be a tuple when one name has two plausible
+# readings that only the content can separate: "employment_length" is
+# emp_length_years when it holds 7 and emp_length when it holds "7 years", and
+# parse_emp_length returns NaN for a number, so guessing wrong silently empties
+# the column (FINDINGS 7o).
+# Anything not here still has a chance through name similarity and content.
+SYNONYMS: dict[str, str | tuple[str, ...]] = {
     "loanamount": "loan_amnt", "amountrequested": "loan_amnt",
     "amount": "loan_amnt", "principal": "loan_amnt",
     "monthlypayment": "installment", "payment": "installment",
@@ -47,9 +55,15 @@ SYNONYMS: dict[str, str] = {
     "debttoincome": "dti", "dtiratio": "dti", "debtratio": "dti",
     "creditscore": "fico_range_low", "ficoscore": "fico_range_low",
     "fico": "fico_range_low", "score": "fico_range_low",
+    "ficolow": "fico_range_low", "ficorangelow": "fico_range_low",
+    "ficoscorelow": "fico_range_low", "creditscorelow": "fico_range_low",
+    "ficohigh": "fico_range_high", "ficorangehigh": "fico_range_high",
+    "ficoscorehigh": "fico_range_high", "creditscorehigh": "fico_range_high",
     "opencreditlines": "open_acc", "openaccounts": "open_acc",
     "numopenaccounts": "open_acc", "openlines": "open_acc",
     "totalaccounts": "total_acc", "numaccounts": "total_acc",
+    "totalcreditlines": "total_acc", "creditlines": "total_acc",
+    "totaltradelines": "total_acc", "tradelines": "total_acc",
     "revolvingbalance": "revol_bal", "revbalance": "revol_bal",
     "revolvingutilisation": "revol_util", "revolvingutilization": "revol_util",
     "utilisation": "revol_util", "utilization": "revol_util",
@@ -65,8 +79,9 @@ SYNONYMS: dict[str, str] = {
     "publicrecords": "pub_rec", "publicrecord": "pub_rec",
     "bankruptcies": "pub_rec_bankruptcies",
     "mortgageaccounts": "mort_acc", "mortgages": "mort_acc",
-    "employmentlength": "emp_length_years", "yearsemployed": "emp_length_years",
-    "employmentyears": "emp_length_years",
+    "employmentlength": ("emp_length_years", "emp_length"),
+    "yearsemployed": "emp_length_years", "employmentyears": "emp_length_years",
+    "emplength": ("emp_length_years", "emp_length"),
     "term": "term_months", "loanterm": "term_months", "termmonths": "term_months",
     "interestrate": "int_rate", "rate": "int_rate", "apr": "int_rate",
     "verificationstatus": "verification_status",
@@ -118,6 +133,10 @@ FEATURE_CONTENT: dict[str, dict] = {
     "pub_rec": {"kind": "numeric", "range": (0, 90)},
     "mort_acc": {"kind": "numeric", "range": (0, 60)},
     "emp_length_years": {"kind": "numeric", "range": (0, 60)},
+    # The raw column, which a derivation parses. Its content rule is what keeps a
+    # numeric employment column off it: parse_emp_length reads "7 years", not 7.
+    "emp_length": {"kind": "categorical",
+                   "text_pattern": r"^\s*(<\s*1\s+year|\d{1,2}\+?\s*years?)\s*$"},
     "purpose": {"kind": "categorical"},
     "home_ownership": {"kind": "categorical"},
     "addr_state": {"kind": "categorical", "text_pattern": r"^\s*[A-Za-z]{2}\s*$"},
@@ -175,6 +194,11 @@ class MappingProposal:
     """Columns understood but useless to *this* model, with the reason -- a credit
     score in a file scored by a model that has no score feature is recognised and
     then not used, which is worth saying rather than filing under 'ignored'."""
+    unused_targets: dict[str, str] = field(default_factory=dict)
+    """The same columns, as data: uploaded column -> the feature it was recognised
+    as. A column this model does not score can still be worth reporting outcomes
+    by -- addr_state is excluded from the model and is exactly what fair-lending
+    monitoring looks at -- and that needs the feature name, not the sentence."""
 
     def mapping(self, *, min_confidence: float = 0.55) -> dict[str, str]:
         """Columns to rename, those at or above ``min_confidence`` pre-selected."""
@@ -241,6 +265,34 @@ def _content_check(values: pd.Series, feature: str) -> tuple[float, str]:
     return 1.2, note
 
 
+def rename_targets(spec, have) -> list[str]:
+    """The columns a rename may legitimately produce, for a file that has ``have``.
+
+    Model features the file lacks, **plus the raw columns a blocked derivation
+    reads**. The second half is not an extra: ``emp_length``, ``fico_range_low``
+    and ``fico_range_high`` are superseded by derived features and so are not in
+    the spec at all, which left them reachable under no name but their own. A file
+    calling them ``employment_length`` and ``fico_low``/``fico_high`` therefore lost
+    emp_length_years and fico_midpoint -- measured at 52.8% rejection against 24.4%
+    with them (FINDINGS 7o), because an absent column the model never saw missing is
+    not a graceful degradation.
+
+    Only inputs for a derivation whose own feature is wanted, so a file is never
+    asked for a column that would feed nothing.
+    """
+    have = set(have)
+    wanted = [c for c in spec.all_columns if c not in have]
+    targets = list(wanted)
+    for _pass in range(2):           # a chain closes: term -> term_months -> ...
+        for rule in DERIVATIONS:
+            if rule.feature not in targets:
+                continue
+            for col in rule.needs:
+                if col not in have and col not in targets:
+                    targets.append(col)
+    return targets
+
+
 def propose_mapping(df: pd.DataFrame, spec, *, values=None,
                     min_confidence: float = 0.55) -> MappingProposal:
     """Propose which uploaded columns are which model features.
@@ -252,7 +304,8 @@ def propose_mapping(df: pd.DataFrame, spec, *, values=None,
     present = {c for c in df.columns if c in features}
     not_in_model: dict[str, str] = {}
     proposal = MappingProposal(exact={c: c for c in present})
-    wanted = [f for f in features if f not in present]
+    # Model features the file lacks, plus the raw columns a blocked derivation reads.
+    wanted = rename_targets(spec, df.columns)
     normalised_features = {normalise(f): f for f in wanted}
     known_levels = getattr(values, "categories", {}) or {}
 
@@ -263,12 +316,20 @@ def propose_mapping(df: pd.DataFrame, spec, *, values=None,
         key = normalise(column)
         candidates: list[Candidate] = []
 
-        target = SYNONYMS.get(key)
-        if target and target in wanted:
-            candidates.append(Candidate(target, 0.90, f"synonym table: {key}"))
-        elif target and target not in features:
-            not_in_model[column] = (
-                f"recognised as {target}, which this model does not use")
+        listed = SYNONYMS.get(key)
+        listed = (listed,) if isinstance(listed, str) else tuple(listed or ())
+        usable = [t for t in listed if t in wanted]
+        # Every reading the table lists is proposed. The content check below vetoes
+        # the ones this column cannot be and ranks what survives, so a name with two
+        # readings is settled by what is in the column rather than by table order.
+        for rank, target in enumerate(usable):
+            candidates.append(Candidate(target, 0.90 - 0.01 * rank,
+                                        f"synonym table: {key}"))
+        if listed and not usable:
+            unusable = [t for t in listed if t not in features]
+            if unusable:
+                not_in_model[column] = (
+                    f"recognised as {unusable[0]}, which this model does not use")
         if key in normalised_features:
             feature = normalised_features[key]
             if all(c.feature != feature for c in candidates):
@@ -322,6 +383,10 @@ def propose_mapping(df: pd.DataFrame, spec, *, values=None,
             scored.setdefault(checked[0].feature, []).append(match.column)
         elif column in not_in_model:
             proposal.recognised_but_unused[column] = not_in_model[column]
+            target = SYNONYMS.get(key)
+            target = target[0] if isinstance(target, tuple) else target
+            if target:
+                proposal.unused_targets[column] = target
         else:
             proposal.ignored.append(column)
         proposal.matches.append(match)

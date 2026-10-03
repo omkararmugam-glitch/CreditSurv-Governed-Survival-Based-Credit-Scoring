@@ -48,9 +48,11 @@ from creditsurv.batch import BatchError  # noqa: E402
 from creditsurv.config import load_config  # noqa: E402
 from creditsurv.environment import (blocked_imports,  # noqa: E402
                                     policy_block_message)
+from creditsurv.stages import StageLog  # noqa: E402
 
 STEP_LABELS = {"check": "Checking file", "clean": "Cleaning data",
                "profile": "Profiling data", "score": "Scoring applicants",
+               "decide": "Deciding", "checks": "Run checks",
                "explain": "Explaining decisions", "files": "Preparing files"}
 
 
@@ -136,19 +138,28 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     model, model_path, run_dir = None, None, None
+    # With --run-dir (how the API and the dashboard hand a large file to the
+    # background runner) the steps are also kept in <run>/stages.json, which the
+    # pipeline view reads; printing is unchanged either way.
+    stages = StageLog(Path(args.run_dir), also=progress) if args.file and args.run_dir \
+        else None
     try:
         if args.file:
             name = target.name
             if name.startswith("input_"):    # the dashboard saves uploads as input_<name>
                 name = name[len("input_"):]
+            if stages:
+                stages("check", "running", "loading the model")
             ctx = batch.load_context(cfg, args.model_tag, args.model)
             result = batch.score_file(
                 target, name, cfg, threshold=args.threshold, chunk_rows=args.chunk_rows,
                 explainer=args.explainer,
                 mapping=dict(pair.split("=", 1) for pair in args.map) if args.map else None,
                 run_dir=Path(args.run_dir) if args.run_dir else None,
-                progress=progress, ctx=ctx,
+                progress=stages or progress, ctx=ctx,
                 allow_unapproved_model=args.allow_unapproved_model)
+            if stages:
+                stages.finish()
             model, model_path, run_dir = ctx.model, ctx.model_path, result.run_dir
             s = result.summary
             print(f"\nPHASE 1 done in {s['phase1_seconds']:.1f}s: {s['n_rows']:,} "
@@ -174,6 +185,8 @@ def main(argv: list[str] | None = None) -> int:
             limit=cap if cap and cap > 0 else None, only=args.row,
             model=model, model_path=model_path, progress=progress)
     except BatchError as exc:
+        if stages and stages.state.get("finished") is None:
+            stages.fail(exc.message, exc.detail, exc.fix)
         return refused(exc)
     return _report(batch.load_result(phase2.run_dir), started)
 

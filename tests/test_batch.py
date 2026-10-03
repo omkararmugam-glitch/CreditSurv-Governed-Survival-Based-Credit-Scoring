@@ -187,7 +187,7 @@ def test_end_to_end_produces_every_output(runs, cfg, ctx):
     # Decisions first (Phase 1: check, clean, score, profile, files), reasons after
     # (Phase 2: explain) -- the order that lets decisions show within minutes.
     assert [s for s, st in steps if st == "done"] == \
-        ["check", "clean", "score", "profile", "files", "explain"]
+        ["check", "clean", "score", "decide", "profile", "checks", "files", "explain"]
     # Profiling samples the whole file, so it finishes with the last block --
     # after scoring, though the page lists it earlier and shows it in progress.
     assert ("profile", "running") in steps
@@ -388,6 +388,51 @@ def test_lending_club_formatting_is_read_not_dropped(runs, cfg, ctx):
     assert (scored["n_unreadable_numbers"] == 0).all()
     assert res.clean_report.coerced_text["annual_inc"] == 12
     assert res.clean_report.coerced_text["revol_util"] == 12
+
+
+TERM_SPEC = FeatureSpec(numeric=("term_months", "loan_amnt"), categorical=(),
+                        structural_missing=())
+
+
+@pytest.mark.parametrize("column, values", [
+    ("term", [" 36 months", " 60 months"]),        # padded, as the synthetic file had it
+    ("term", ["36 months", "60 months"]),          # unpadded, as the real file has it
+    ("term_months", ["36 months", "60 months"]),   # already named, still text
+    ("term_months", [36, 60]),                     # already named, already months
+])
+def test_a_term_reads_as_months_for_every_reader_of_the_frame(column, values):
+    """A synonym renames a column; it does not read it.
+
+    ``term`` was renamed to ``term_months`` while still holding "36 months", and
+    the rename also skipped the derivation that was the one place parsing it -- the
+    column existed by then. Everything reading this frame saw text where it wanted
+    months: the drift check scored the feature as wholly missing, the numeric
+    profile dropped it, and the input-quality gate counted it readable because a
+    string is not missing. Scoring was right throughout, parsing on its own path,
+    so the two disagreed about exactly one feature.
+    """
+    df = pd.DataFrame({column: values, "loan_amnt": [1000.0, 2000.0]})
+    mapping = {"term": "term_months"} if column == "term" else {}
+    work, _ = validate(df, TERM_SPEC, mapping=mapping)
+    assert pd.api.types.is_numeric_dtype(work["term_months"]), work["term_months"].dtype
+    assert list(work["term_months"]) == [36.0, 60.0]
+
+    # Pinned where it was measured. A column read as text is 100% missing to the
+    # drift check, which scores it 2*ln(1/eps) = 27.631 -- the same number for
+    # every file, whatever its terms, which is how this was found.
+    reference = pd.Series([36.0] * 700 + [60.0] * 300)
+    score, _ = drift_mod.population_stability_index(reference, work["term_months"])
+    assert score < drift_mod.MODERATE, score
+
+
+def test_a_term_that_is_not_a_term_is_missing_rather_than_readable():
+    """The input-quality gate counts missing values, so an unreadable term has to
+    arrive missing. Parsing per value: one bad term does not take the column."""
+    df = pd.DataFrame({"term": ["three years", "36 months"],
+                       "loan_amnt": [1000.0, 2000.0]})
+    work, _ = validate(df, TERM_SPEC, mapping={"term": "term_months"})
+    assert list(work["term_months"].isna()) == [True, False]
+    assert work["term_months"].iloc[1] == 36.0
 
 
 def test_uploaded_values_never_change_the_learned_values(runs, cfg, ctx):

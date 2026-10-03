@@ -34,7 +34,8 @@ from .registry import SYNC_MARKER
 
 __all__ = ["windows_source", "stale_files", "sync_blockers", "sync_now",
            "copy_back_soon", "restart_server", "CODE_DIRS", "auto_sync",
-           "start_watcher", "note_session", "open_sessions", "launch_command"]
+           "start_watcher", "note_session", "open_sessions", "launch_command",
+           "code_stamp", "start_restart_watcher"]
 
 CODE_DIRS = ("src", "app", "scripts", "config", ".streamlit")
 _SKIP = ("__pycache__", ".pytest_cache", ".egg-info")
@@ -79,7 +80,8 @@ def stale_files(root: Path, source: Path, dirs=CODE_DIRS, slack: float = 2.0) ->
     return sorted(out)
 
 
-OUR_PROCESSES = ("creditsurv.runner", "06_score_upload", "streamlit")
+OUR_PROCESSES = ("creditsurv.runner", "06_score_upload", "streamlit",
+                 "creditsurv.api")
 """What a job of ours runs as: the runner, the scoring script (Phase 1 and a
 background Phase 2), or the app (an on-demand explanation). Not "creditsurv" alone:
 in WSL every Python process's path contains it, because the venv lives in
@@ -181,7 +183,8 @@ def sync_now(root: Path, source: Path, timeout: float = 600) -> tuple[bool, str]
 
 def copy_back_soon(root: Path = PROJECT_ROOT) -> bool:
     """Copy finished results back to Windows in the background, if this is the WSL
-    copy. Returns whether a copy was started. Never blocks, never deletes."""
+    copy. Returns whether a copy is now on its way -- started, or already queued
+    behind one that is running. Never blocks, never deletes."""
     source = windows_source(root)
     if source is None:
         return False
@@ -192,12 +195,56 @@ def copy_back_soon(root: Path = PROJECT_ROOT) -> bool:
     # One copy-back at a time, in the order asked for. Phase 1 of a large run can
     # still be copying a gigabyte when Phase 2 finishes and asks again; run side by
     # side, the older copy could land last and put older files over newer ones.
+    #
+    # And at most one waiting behind the one that runs. Phase 2 asks again at every
+    # checkpoint (phase2.COPY_BACK_EVERY, 60 s) while a copy over /mnt/c takes longer
+    # than that, so queueing every request piled up hundreds of them on a single run,
+    # each one another full rsync of outputs/ still to do. Dropping a request while
+    # one already waits loses nothing: the waiter runs afterwards and copies whatever
+    # is on disk by then, which includes what the dropped request was asking about.
+    #
+    # The waiting slot is taken *here*, before the child exists, and only released
+    # once that child holds the one-at-a-time lock. Leaving the claim to the child
+    # would make it a race with its own fork: two requests a moment apart could both
+    # find the slot free (both queue) or find it held by a child that has not started
+    # waiting yet (the second is dropped, and the first copies before the files it
+    # was asked about were written).
     import shutil
+    slot = None
     if shutil.which("flock"):
-        cmd = ["flock", str(log.with_name("copy_back.lock")), *cmd]
-    with open(log, "a", encoding="utf-8") as fh:
-        subprocess.Popen(cmd, env=env, stdout=fh, stderr=subprocess.STDOUT,
-                         stdin=subprocess.DEVNULL, start_new_session=True)
+        import fcntl
+        slot = os.open(log.with_name("copy_back.queued.lock"),
+                       os.O_CREAT | os.O_WRONLY, 0o644)
+        if slot == 8:              # the number the shell below opens the run lock on
+            slot, stale = os.dup(slot), slot      # dup takes the lowest free fd, not 8
+            os.close(stale)
+        try:
+            fcntl.flock(slot, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(slot)
+            return True            # one runs, one waits: this copy is already covered
+        # fd `slot` is inherited (pass_fds clears close-on-exec) and closed by the
+        # shell once it holds fd 8, freeing the slot for the next request; fd 8 is
+        # held across the exec, for as long as the copy-back runs.
+        #
+        # bash, not sh: `slot` is whatever descriptor number happened to be free,
+        # and /bin/sh here is dash, which does not take a two-digit one in a
+        # redirection -- `exec 12>&-` sends it looking for a command called 12. A
+        # bare script has few files open and gets a single digit, so this worked
+        # when run by hand and not in the server, where dozens are open: 84
+        # copy-backs in this project's own log died with "exec: 12: not found",
+        # each one a result that never reached Windows. bash takes any number.
+        cmd = ["bash", "-c",
+               f'exec 8>"$1"; flock 8; exec {slot}>&-; shift; exec "$@"',
+               "creditsurv-copy-back", str(log.with_name("copy_back.lock")), *cmd]
+    try:
+        with open(log, "a", encoding="utf-8") as fh:
+            subprocess.Popen(cmd, env=env, stdout=fh, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True,
+                             pass_fds=() if slot is None else (slot,))
+    finally:
+        if slot is not None:       # the child's copy keeps the lock held
+            os.close(slot)
     return True
 
 
@@ -279,6 +326,54 @@ def start_watcher(root: Path = PROJECT_ROOT, interval: float = 20.0,
 
     t = threading.Thread(target=loop, name="creditsurv-code-sync", daemon=True)
     _WATCHER["thread"] = t
+    t.start()
+    return True
+
+
+def code_stamp(root: Path = PROJECT_ROOT) -> float:
+    """The newest modification time of the library's code in ``root``."""
+    newest = 0.0
+    for p in (Path(root) / "src").rglob("*.py"):
+        if not any(s in p.parts for s in _SKIP):
+            try:
+                newest = max(newest, p.stat().st_mtime)
+            except OSError:
+                continue
+    return newest
+
+
+def start_restart_watcher(root: Path = PROJECT_ROOT, *, busy, name: str,
+                          interval: float = 20.0, restart=None) -> bool:
+    """For the API server in the WSL copy: restart onto new code once idle.
+
+    The dashboard's watcher (:func:`start_watcher`) does the syncing; after a sync
+    the files on disk are new but this process still runs the code it imported.
+    This loop reports whether the server has work in hand (``busy()``, e.g. a file
+    being scored in-process) as a session heartbeat, which makes the dashboard's
+    watcher defer a sync until it is done; and once the code on disk is newer than
+    at start and nothing is in hand, it re-executes the server on it. Background
+    jobs are separate processes and are unaffected. Does nothing outside the WSL
+    copy. Returns whether it started.
+    """
+    if _WATCHER.get(name) is not None or windows_source(root) is None:
+        return _WATCHER.get(name) is not None
+    import threading
+
+    started = code_stamp(root)
+
+    def loop():
+        while not _WATCHER.get("stop"):
+            time.sleep(interval)
+            try:
+                now_busy = bool(busy())
+                note_session(name, now_busy, root)
+                if not now_busy and code_stamp(root) > started + 1.0:
+                    (restart or restart_server)()
+            except Exception:                           # never take the server down
+                continue
+
+    t = threading.Thread(target=loop, name=f"creditsurv-{name}-restart", daemon=True)
+    _WATCHER[name] = t
     t.start()
     return True
 

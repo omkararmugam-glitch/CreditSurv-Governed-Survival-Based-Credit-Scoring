@@ -1,0 +1,73 @@
+**************************************************************************
+           SPECIMEN -- NOT FOR LENDING DECISIONS -- DO NOT SEND           
+**************************************************************************
+==========================================================================
+                       STATEMENT OF ADVERSE ACTION                        
+==========================================================================
+
+Date:          2026-09-27
+Applicant ID:  APP-000015
+
+Example Lending Co.
+123 Example Street
+Springfield, IL 62701
+
+--------------------------------------------------------------------------
+ACTION TAKEN
+--------------------------------------------------------------------------
+We regret to inform you that we have declined your
+application for credit.
+
+--------------------------------------------------------------------------
+PRINCIPAL REASONS FOR OUR DECISION
+--------------------------------------------------------------------------
+The principal reason(s) for this decision were:
+
+1. Number of accounts opened recently
+   You have opened several new accounts in the last two years.
+
+2. Amount of credit requested
+   The amount of credit requested contributed to this decision.
+
+3. Excessive obligations in relation to income
+   Your total monthly debt payments are high relative to your income.
+
+4. Proportion of available revolving credit currently in use
+   You are using a high share of the revolving credit lines available to you.
+
+If you have questions about these reasons, you may contact us at
+the address above.
+
+--------------------------------------------------------------------------
+CREDIT SCORE INFORMATION
+--------------------------------------------------------------------------
+Our decision was based in whole or in part on information
+obtained in a report from a consumer reporting agency.
+
+Your credit score:  692
+Possible range:     300 to 850
+Score source:       Credit bureau risk score
+Date of score:      2026-09-27
+
+You have a right to obtain a free copy of your consumer report
+from the reporting agency and to dispute the accuracy or
+completeness of any information in that report.
+
+--------------------------------------------------------------------------
+YOUR RIGHTS UNDER FEDERAL LAW
+--------------------------------------------------------------------------
+The federal Equal Credit Opportunity Act prohibits creditors from
+discriminating against credit applicants on the basis of race, color,
+religion, national origin, sex, marital status, age (provided the
+applicant has the capacity to enter into a binding contract); because all
+or part of the applicant's income derives from any public assistance
+program; or because the applicant has in good faith exercised any right
+under the Consumer Credit Protection Act.
+
+The federal agency that administers compliance with this law
+concerning this creditor is:
+  Consumer Financial Protection Bureau
+  1700 G Street NW
+  Washington, DC 20552
+
+==========================================================================

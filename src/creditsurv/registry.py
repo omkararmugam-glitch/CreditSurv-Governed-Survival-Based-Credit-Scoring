@@ -501,6 +501,22 @@ def evaluate_rules(cfg, record: ModelRecord) -> list[RuleResult]:
         explain_settings=(int(d.explain_nsamples), int(d.explain_n_background)))
 
 
+def evidence_fingerprint(cfg, registry_file: Path | None = None) -> tuple:
+    """Changes whenever a file a rule reads changes -- anything in the models and
+    tables folders, or the registry itself -- so a cached rule result never outlives
+    the evidence it was computed from."""
+    registry_file = Path(registry_file or registry_path(cfg))
+    items = []
+    for folder in (cfg.paths.models_dir, cfg.paths.tables_dir):
+        folder = Path(folder)
+        if folder.is_dir():
+            items += [(p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                      for p in folder.iterdir() if p.is_file()]
+    if registry_file.exists():
+        items.append(("registry", registry_file.stat().st_mtime_ns))
+    return tuple(sorted(items))
+
+
 def synced_copy_source(root: Path = PROJECT_ROOT) -> str | None:
     """The Windows folder this project was synced from, when it is the WSL copy.
 

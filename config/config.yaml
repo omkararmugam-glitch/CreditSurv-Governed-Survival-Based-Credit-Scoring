@@ -100,8 +100,15 @@ decision:
   drift_min_rows: 500         # below this, drift is reported as 'too few rows'
   min_feature_coverage: 0.60
   # Fail the run if a model feature in the file is unreadable for more than this
-  # share of rows, or missing for this much more than it was in training.
+  # share of rows, or missing for this much more than it was in training. It judges
+  # only features the file supplied; a feature absent altogether is the rule below.
   input_quality_max_share: 0.05
+  # The second half of the required/optional gate (FINDINGS 7o). A feature missing
+  # in under this share of the training rows has no learned NaN route, so its
+  # absence is an unlearned tree default, not a degradation -- whatever its ablation
+  # cost says, because ablation measures ranking lost and this shifts the level.
+  unlearned_missing_floor: 0.01
+  unlearned_missing_action: fill   # fill (training value, stamped per feature) | block
   # Share of rejections where a non-disclosable feature was a top adverse driver,
   # above which the dashboard asks for fair-lending review (FINDINGS 7l).
   fair_lending_review_share: 0.05

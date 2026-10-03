@@ -266,13 +266,20 @@ def test_term_with_mixed_case_and_padding_parses_through_the_upload_path():
                  "36-month", "  60 months  "],
         "int_rate": ["8.19%", "9.37", "10%", "7.5", "12.0%", "11", "6.25"],
     })
-    renamed, _ = validate(upload, TERM_SPEC)
+    renamed, rep = validate(upload, TERM_SPEC)
     assert "term_months" in renamed.columns
-    cleaned, report, flags = clean(renamed, TERM_SPEC, _term_values())
+    # Parsed in validate, not left as text for cleaning: the profile, the drift
+    # check and the input-quality gate all read this frame, and a term read as
+    # text made drift score the feature wholly missing (FINDINGS 7n). The count
+    # is reported where the parsing happens, and run_batch folds it into the
+    # file's cleaning report so cleaning_report.csv is unchanged.
+    assert renamed["term_months"].tolist() == [36, 60, 36, 60, 36, 36, 60]
+    assert rep.coerced_text["term_months"] == 6       # all but the bare "36"
 
+    cleaned, report, flags = clean(renamed, TERM_SPEC, _term_values())
     assert cleaned["term_months"].tolist() == [36, 60, 36, 60, 36, 36, 60]
     assert report.unreadable_numbers == {}
-    assert report.coerced_text["term_months"] == 6    # all but the bare "36"
+    assert "term_months" not in report.coerced_text   # already months by now
     assert (flags["n_unreadable_numbers"] == 0).all()
 
 

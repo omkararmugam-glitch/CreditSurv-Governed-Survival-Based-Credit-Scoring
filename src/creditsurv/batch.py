@@ -75,10 +75,12 @@ import pandas as pd
 
 from . import drift as drift_mod
 from . import eda
-from .derive import DERIVATIONS, FeatureCosts, derive_features, load_costs
+from .derive import (DERIVATIONS, FeatureCosts, derive_features,
+                     expand_wanted, load_costs)
 from .schema_match import propose_mapping
-from .cleaning import (DUPLICATE_RULES, CleaningPolicy, CleaningReport,
-                       CleaningValues, DuplicateTracker, clean, fit_values,
+from .cleaning import (COLUMN_PARSERS, DUPLICATE_RULES, CleaningPolicy,
+                       CleaningReport, CleaningValues, DuplicateTracker, clean,
+                       coerce_column, fit_values,
                        policy_from_config)   # fit_values: never called
 # here -- imported so tests/test_cleaning_values_source.py can assert that scoring
 # does not fit cleaning values.
@@ -294,11 +296,30 @@ class ValidationReport:
     """Feature -> the inputs a derivation would have needed."""
     required_missing: list[str] = field(default_factory=list)
     optional_missing: list[str] = field(default_factory=list)
+    coerced_text: dict[str, int] = field(default_factory=dict)
+    """Feature -> values that were text only a parser could read. Counted here
+    because the parsing happens here; folded into the cleaning report by
+    :func:`run_batch`, which is where the file's report is assembled."""
     required_rule: str = "provisional"
     """"measured" when the model's ablation table decided which features are
     required, "provisional" when the hand-picked list stood in for it."""
     required_rule_note: str = ""
+    unlearned_missing: list[str] = field(default_factory=list)
+    """Absent features the model never saw missing in training, so its NaN route for
+    them is an unlearned default rather than a degradation (FINDINGS 7o). Judged on
+    the training missing rate, independently of ablation cost."""
+    unlearned_rule_note: str = ""
+    filled_from_training: dict[str, object] = field(default_factory=dict)
+    """Feature -> the training value substituted for it, for those of
+    ``unlearned_missing`` the run filled rather than refused. Named here, per
+    feature, because a count or a coverage percentage cannot say which applicant
+    attribute was invented."""
+    unlearned_action: str = "fill"
     unused: dict[str, str] = field(default_factory=dict)
+    unused_targets: dict[str, str] = field(default_factory=dict)
+    """Uploaded column -> the feature it was recognised as, for columns this model
+    does not score. What lets a monitoring segment find ``state`` in a file scored
+    by a model with no geography (FINDINGS 7c)."""
     costs: object = None
 
     @property
@@ -337,11 +358,21 @@ class ValidationReport:
             lines.append("Missing: " + "; ".join(missing_bits[:12])
                          + (f" and {len(missing_bits) - 12} more"
                             if len(missing_bits) > 12 else ""))
+        if self.filled_from_training:
+            lines.append(
+                "Filled with a training value, not read from the file: " + "; ".join(
+                    f"{k} = {v}" for k, v in self.filled_from_training.items())
+                + ". The model never saw these features missing in training, so "
+                "leaving them absent would rest on an unlearned default. Do not "
+                "treat these applicants' results as fully reliable for these "
+                "attributes.")
         if self.unused:
             lines.append("Recognised but unused by this model: " + "; ".join(
                 f"{k} ({v})" for k, v in self.unused.items()))
         if self.required_rule == "provisional" and self.required_rule_note:
             lines.append(self.required_rule_note)
+        if self.unlearned_missing and self.unlearned_rule_note:
+            lines.append(self.unlearned_rule_note)
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
@@ -354,10 +385,15 @@ class ValidationReport:
                 "required_rule": self.required_rule,
                 "required_rule_note": self.required_rule_note,
                 "recognised_but_unused": self.unused,
+                "unused_targets": self.unused_targets,
                 "coverage": round(self.coverage, 4), "id_column": self.id_column,
                 "mapped": self.mapped, "ignored": self.ignored,
                 "missing_core": self.missing_core,
                 "missing_optional": self.missing_optional,
+                "unlearned_missing": self.unlearned_missing,
+                "unlearned_rule_note": self.unlearned_rule_note,
+                "unlearned_action": self.unlearned_action,
+                "filled_from_training": dict(self.filled_from_training),
                 "warnings": self.warnings}
 
 
@@ -449,7 +485,9 @@ def read_upload(data, filename: str) -> pd.DataFrame:
 
 
 def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
-             mapping: dict | None = None) -> tuple[pd.DataFrame, ValidationReport]:
+             mapping: dict | None = None, fill_values: dict | None = None,
+             unlearned_action: str = "fill",
+             ) -> tuple[pd.DataFrame, ValidationReport]:
     """Rename known aliases, check the model's features, report the rest.
 
     Returns the frame with model-feature names, and the report. A missing *core*
@@ -477,14 +515,38 @@ def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
     renames = {k: v for k, v in renames.items()
                if k in work.columns and v not in work.columns}
     work = work.rename(columns=renames)
+
+    # A synonym is a change of name, not a reading. "term" arrives holding
+    # "36 months" and is renamed to term_months, which also skips step 2 below --
+    # the column now exists, so its derivation, the one place that parsed it, is
+    # never reached. Everything that reads *this* frame then saw text where it
+    # expected months: the drift check scored term_months as 100% missing
+    # (PSI 27.631 = 2*ln(1/eps), the same number for every file, which is how it
+    # was found), the numeric profile dropped the column, and the input-quality
+    # gate counted it readable because a string is not missing. Scoring was right
+    # throughout, because creditsurv.cleaning parses the column on its own path --
+    # so the two paths disagreed about one feature.
+    #
+    # The parser cleaning uses is applied here instead, so there is one reading of
+    # a term and every reader of this frame gets it. Applied to the column
+    # whenever it is present, not only when renamed: a file whose column is
+    # already called term_months skips the derivation the same way. The parsers
+    # are idempotent -- a column of numbers is returned as numbers.
+    for col in COLUMN_PARSERS:
+        if col in work.columns:
+            work[col], n_text = coerce_column(col, work[col])
+            if n_text:
+                rep.coerced_text[col] = n_text
+
     rep.mapped = dict(renames)
     rep.recognised = dict(renames)
     rep.unused = dict(proposal.recognised_but_unused) if proposal else {}
+    rep.unused_targets = dict(proposal.unused_targets) if proposal else {}
     rep.proposal = proposal
 
     # 2. Derivation. Exact arithmetic from columns the file does have, never a guess.
     wanted = [c for c in spec.all_columns if c not in work.columns]
-    work, derived, blocked = derive_features(work, wanted)
+    work, derived, blocked = derive_features(work, expand_wanted(wanted))
     rep.derived, rep.blocked = derived, blocked
 
     # 3. What is left, and which tier it falls in.
@@ -501,6 +563,22 @@ def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
     rep.required_rule_note = costs.rule_note()
     rep.required_missing = [c for c in missing if c in required]
     rep.optional_missing = [c for c in missing if c not in required]
+    # The gate's second rule. A feature the training rows never saw missing has no
+    # learned route for its absence, so leaving it NaN hands every row to the
+    # booster's default direction -- which is why this is decided on the training
+    # missing rate and not on the ablation cost that already called these optional.
+    rep.unlearned_missing = costs.unlearned_missing(rep.optional_missing)
+    rep.unlearned_rule_note = costs.unlearned_note(rep.optional_missing)
+    rep.unlearned_action = unlearned_action
+    if rep.unlearned_missing:
+        if unlearned_action == "block":
+            rep.required_missing = rep.required_missing + rep.unlearned_missing
+            rep.optional_missing = [c for c in rep.optional_missing
+                                    if c not in rep.unlearned_missing]
+        else:
+            rep.filled_from_training = {
+                c: (fill_values or {})[c] for c in rep.unlearned_missing
+                if c in (fill_values or {})}
     rep.missing_core = list(rep.required_missing)
     rep.missing_optional = list(rep.optional_missing)
     # A raw column that fed a derivation was used, whatever the fixed notes say.
@@ -532,6 +610,25 @@ def validate(df: pd.DataFrame, spec, *, values=None, costs=None,
             f"{len(rep.optional_missing)} of the model's {rep.n_features} features "
             f"are not in this file and are treated as missing"
             + (f". Measured cost: {detail}" if detail else "."))
+    # One warning per feature, naming it and the value put in its place. Folding
+    # these into the optional-missing cost line is exactly what hid this case: that
+    # line reports concordance, and concordance is blind to the shift (FINDINGS 7o).
+    for feature, value in rep.filled_from_training.items():
+        rep.warnings.append(
+            f"{feature}: absent from file, filled with the training "
+            f"{'median' if not isinstance(value, str) else 'modal value'} "
+            f"({value}) because the model never saw it missing in training and so "
+            f"has no learned route for its absence. Do not treat these applicants' "
+            f"results as fully reliable for this attribute.")
+    unfilled = [c for c in rep.unlearned_missing
+                if c not in rep.filled_from_training
+                and c not in rep.required_missing]
+    if unfilled:
+        rep.warnings.append(
+            f"{', '.join(unfilled)}: absent from file, the model never saw them "
+            f"missing in training, and no training value was available to stand in. "
+            f"They were left missing, so these rows rest on the booster's default "
+            f"direction for them -- an unmeasured constant (FINDINGS 7o).")
     if rep.ignored:
         rep.warnings.append(
             f"{len(rep.ignored)} column(s) in the file are not model features and "
@@ -558,10 +655,33 @@ class ScoringContext:
     times: np.ndarray
     data_source: Path
     values_from_bundle: bool = True
+    train_missing: dict[str, float] = field(default_factory=dict)
+    """Feature -> share of the model's training rows where it was missing, measured
+    on ``reference``. What the unlearned-default rule needs and the ablation table
+    does not hold; see derive.UNLEARNED_MISSING_FLOOR."""
+    train_fill: dict[str, object] = field(default_factory=dict)
+    """Feature -> the value that stands in when the file omits it entirely: the
+    median for a numeric feature, the modal level for a categorical one, both from
+    the training rows. Only ever used for a feature the unlearned-default rule
+    caught, and only when it names the feature in the output."""
 
     @property
     def flavour(self) -> str:
         return "cox" if self.model_name == "cox" else "gbm"
+
+    def costs_with_training(self, costs):
+        """``costs`` carrying this model's training missing rates, so the gate can
+        apply both of its rules rather than only the measured one."""
+        return costs.with_train_missing(
+            self.train_missing, rows=len(self.reference),
+            source=f"{Path(self.data_source).name} training split",
+            structural=getattr(self.spec, "structural_missing", ()),
+            floor=getattr(self.cfg.decision, "unlearned_missing_floor", None))
+
+    def unlearned_fill(self, costs) -> dict[str, object]:
+        """Feature -> stand-in value, for every feature the rule would catch."""
+        return {f: self.train_fill[f] for f in self.spec.all_columns
+                if f in self.train_fill and costs.unlearned(f)}
 
 
 def available_models(models_dir: Path) -> list[str]:
@@ -688,16 +808,51 @@ def load_context(cfg: Config, model_tag: str | None = None,
             f"Add them once, without retraining: python "
             f"scripts/02s_save_cleaning_values.py --model-tag {model_tag}")
     values = CleaningValues.from_dict(saved)
+    train_missing, train_fill = _training_missingness(train, spec, values)
 
     return ScoringContext(
         cfg=cfg, model_tag=model_tag, model_name=key, model=art[key], spec=spec,
         bundle=bundle, model_path=model_path, background=dm.X, reference=train,
         clean_values=values, policy=policy,
         times=np.array(cfg.model.eval_horizons_months, dtype=float),
-        data_source=Path(src), values_from_bundle=from_bundle)
+        data_source=Path(src), values_from_bundle=from_bundle,
+        train_missing=train_missing, train_fill=train_fill)
 
 
-def prepare(df: pd.DataFrame, ctx: ScoringContext
+def _training_missingness(train: pd.DataFrame, spec,
+                          values: CleaningValues) -> tuple[dict, dict]:
+    """How often each feature was missing in training, and what stands in for it.
+
+    The rate is the input to the unlearned-default rule. The stand-in is the value
+    that rule substitutes: the cleaning values' median where they hold one -- the
+    same number the Cox path fills with, fitted on the whole training split rather
+    than this sample -- and otherwise the sample's own median, which is all a feature
+    derived after cleaning (fico_midpoint, emp_length_years) has.
+    """
+    rates: dict[str, float] = {}
+    fills: dict[str, object] = {}
+    categorical = set(getattr(spec, "categorical", ()))
+    for col in spec.all_columns:
+        if col not in train.columns:
+            continue           # unknown, and an unknown rate is never a low one
+        series = train[col]
+        rates[col] = float(series.isna().mean())
+        if col in categorical:
+            modes = series.dropna().astype("string").mode()
+            if len(modes):
+                fills[col] = str(modes.iloc[0])
+            continue
+        if col in values.medians:
+            fills[col] = float(values.medians[col])
+            continue
+        median = pd.to_numeric(series, errors="coerce").median()
+        if pd.notna(median):
+            fills[col] = float(median)
+    return rates, fills
+
+
+def prepare(df: pd.DataFrame, ctx: ScoringContext,
+            fill_values: dict | None = None,
             ) -> tuple[pd.DataFrame, pd.DataFrame, CleaningReport]:
     """Clean and encode uploaded rows exactly as training does.
 
@@ -705,6 +860,12 @@ def prepare(df: pd.DataFrame, ctx: ScoringContext
     the model's training split; encoding is the pipeline's own
     ``build_design_matrix``. Returns the design matrix, a per-row flag frame and
     the cleaning report.
+
+    ``fill_values`` are the stand-ins for features absent from the file that the
+    model never saw missing in training -- ``ValidationReport.filled_from_training``,
+    which is also what the run reports. Passed in rather than read from ``ctx`` so
+    that what was substituted is decided once, by the gate, and every block of a
+    large file is encoded the same way.
     """
     work, report, flags = clean(df, ctx.spec, ctx.clean_values, policy=ctx.policy)
 
@@ -726,11 +887,30 @@ def prepare(df: pd.DataFrame, ctx: ScoringContext
         # needs the trained column set, in order, so they are restored as missing.
         trained = art.get("gbm_columns")
         if trained is not None:
+            # ...except where leaving them missing would hit a route the model never
+            # learned. A feature the training rows never saw blank taught the booster
+            # nothing about NaN, so every row falls to its default split direction: a
+            # fixed, arbitrary constant, and on the file that found this one that
+            # pushed mean PD from 0.2225 to 0.3339 (FINDINGS 7o, which names the
+            # file; nothing here branches on it). A median fitted on the training
+            # rows is also a constant, but a defensible one the run can name -- which
+            # it does, per feature, in the report and the summary.
+            filled = fill_values if fill_values is not None else {}
             for col in trained:
-                if col not in dm.X.columns:
-                    # A missing-as-signal indicator for an absent column is not
-                    # unknown: the value genuinely is not there, so it is 1.
-                    dm.X[col] = 1 if col.endswith("_missing") else np.nan
+                if col in dm.X.columns:
+                    continue
+                if col in filled:
+                    dm.X[col] = filled[col]
+                    continue
+                # A missing-as-signal indicator for an absent column is not
+                # unknown: the value genuinely is not there, so it is 1.
+                dm.X[col] = 1 if col.endswith("_missing") else np.nan
+            # A filled feature is present, so its indicator says present. Done after
+            # the loop so it holds however the column was restored.
+            for col in filled:
+                indicator = f"{col}_missing"
+                if indicator in dm.X.columns:
+                    dm.X[indicator] = 0
             dm.X = dm.X[list(trained)]
             for col, levels in ctx.clean_values.categories.items():
                 if col in dm.X.columns:
@@ -775,6 +955,71 @@ def profile(df: pd.DataFrame, ctx: ScoringContext) -> dict:
     }
 
 
+MONITOR_SEGMENTS: tuple[str, ...] = ("purpose", "income_band", "addr_state")
+"""Dimensions every run reports its decisions by, beyond the headline counts.
+
+Monitoring, not modelling. ``addr_state`` is deliberately **not** a feature of the
+approved model (FINDINGS 7c, 7l), and reporting outcomes by it is the whole point:
+a model that cannot see geography can still decide unevenly across it, and that is
+only visible if the run writes it down. ``income_band`` is the banding Stage 3's
+segment report uses (``features.encoders.income_band``), not a second definition.
+
+Accumulated here, block by block, for the same reason as every other figure on this
+class: a 500 MB upload must cost no more to display than a 25 KB one, so the
+dashboard never reads ``scored_applicants.csv`` back to count anything.
+"""
+
+
+def segment_labels(block: pd.DataFrame, X: pd.DataFrame,
+                   report: "ValidationReport") -> pd.DataFrame:
+    """The monitoring dimensions for one block, as columns of labels.
+
+    Each dimension is taken from the matrix the model actually scored where it is in
+    it, and from the uploaded file where it is not -- so a figure about a feature is
+    about the value the model saw, and a figure about a column the model ignores is
+    about the file. The two cases are distinguished in the output by
+    :data:`MONITOR_SEGMENTS` membership and said out loud on the page.
+
+    A dimension the file cannot supply is simply absent: nothing is imputed, and no
+    "(unknown)" level is invented to fill a chart.
+    """
+    from .features import encoders as enc
+
+    # Indexed on the matrix that was scored, not on the uploaded block: cleaning can
+    # drop rows, and ``decision`` has one entry per scored row. Taking the index from
+    # the block instead would silently pair a decision with another applicant's label.
+    out = pd.DataFrame(index=X.index)
+
+    def column(name: str):
+        if name in X.columns:
+            return X[name]
+        if name in block.columns:
+            return block[name].reindex(X.index)
+        # A column this model does not score may still be in the file under the
+        # name the file gave it.
+        for uploaded, feature in (report.unused_targets or {}).items():
+            if feature == name and uploaded in block.columns:
+                return block[uploaded].reindex(X.index)
+        return None
+
+    purpose = column("purpose")
+    if purpose is not None:
+        out["purpose"] = purpose.astype("string").str.strip()
+
+    income = column("annual_inc")
+    if income is not None:
+        # Left as the ordered Categorical income_band returns: the band order is
+        # part of the definition, and the run records it so no reader has to restate
+        # the edges to sort them.
+        out["income_band"] = enc.income_band(pd.to_numeric(income, errors="coerce"))
+
+    state = column("addr_state")
+    if state is not None:
+        out["addr_state"] = state.astype("string").str.strip().str.upper()
+
+    return out
+
+
 @dataclass
 class Aggregates:
     """Whole-file statistics accumulated block by block.
@@ -794,6 +1039,18 @@ class Aggregates:
     pd_bins: int = 40
     pd_hist: list = field(default_factory=lambda: [0] * 40)
     by_group: dict = field(default_factory=dict)       # "level|decision" -> count
+    by_segment: dict = field(default_factory=dict)
+    """"column|level|decision" -> count, over :data:`MONITOR_SEGMENTS`. A superset of
+    ``by_group``, which is kept as it was so a run written before this still reads."""
+    segment_columns: list = field(default_factory=list)
+    """Which dimensions this run actually had the columns for, in display order. An
+    empty list on a run scored before segments were recorded, which the page says
+    rather than drawing an empty chart."""
+    segment_order: dict = field(default_factory=dict)
+    """Dimension -> its own level order, for the dimensions that have one. Income
+    bands are ordinal and belong in band order on a chart, whatever their sizes, and
+    the order comes from the banding that produced them rather than from a list
+    restated somewhere else."""
     reason_counts: dict = field(default_factory=dict)
     rows_out_of_range: int = 0
     group_column: str = ""
@@ -826,6 +1083,23 @@ class Aggregates:
     def n_rejected_without_reasons(self) -> int:
         return max(0, self.n_rejected - self.n_rejected_explained
                    - self.n_reasons_pending)
+
+    def add_segments(self, segments, decision) -> None:
+        """Count decisions by each monitoring dimension in this block."""
+        if segments is None or len(segments) == 0:
+            return
+        for col in MONITOR_SEGMENTS:
+            if col not in segments.columns:
+                continue
+            if col not in self.segment_columns:
+                self.segment_columns.append(col)
+            values = segments[col]
+            if str(values.dtype) == "category" and col not in self.segment_order:
+                self.segment_order[col] = [str(c) for c in values.cat.categories]
+            levels = values.astype("string").fillna("(missing)").to_numpy()
+            for level, dec in zip(levels, decision):
+                key = f"{col}|{level}|{dec}"
+                self.by_segment[key] = self.by_segment.get(key, 0) + 1
 
     def add(self, pd_h, decision, group, flags, reasons) -> None:
         self.n_rows += len(pd_h)
@@ -862,6 +1136,17 @@ class Aggregates:
                  "applicants": v} for k, v in self.by_group.items()]
         return pd.DataFrame(rows)
 
+    def segment_frame(self) -> pd.DataFrame:
+        """``by_segment`` as rows: one per dimension, level and decision."""
+        rows = []
+        for key, count in self.by_segment.items():
+            column, _, rest = key.partition("|")
+            level, _, decision = rest.rpartition("|")
+            rows.append({"column": column, "group": level, "decision": decision,
+                         "applicants": count})
+        return pd.DataFrame(rows, columns=["column", "group", "decision",
+                                           "applicants"])
+
     def reason_frame(self) -> pd.DataFrame:
         return pd.DataFrame([{"reason": k, "times cited": v} for k, v in
                              sorted(self.reason_counts.items(), key=lambda kv: -kv[1])])
@@ -873,6 +1158,9 @@ class Aggregates:
                 "n_reasons_pending": self.n_reasons_pending,
                 "pd_sum": self.pd_sum, "pd_bins": self.pd_bins,
                 "pd_hist": list(self.pd_hist), "by_group": self.by_group,
+                "by_segment": self.by_segment,
+                "segment_columns": list(self.segment_columns),
+                "segment_order": self.segment_order,
                 "reason_counts": self.reason_counts,
                 "rows_out_of_range": self.rows_out_of_range,
                 "group_column": self.group_column,
@@ -1113,21 +1401,33 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         ctx = ctx or load_context(cfg, model_tag, model_name)
         timed("load_model", time.perf_counter() - t_step)
         t_step = time.perf_counter()
-        costs = load_costs(ctx.model_tag, ctx.cfg.paths.tables_dir)
+        # The ablation costs, plus the training missing rates the table does not
+        # hold, so the gate can apply both of its rules.
+        costs = ctx.costs_with_training(
+            load_costs(ctx.model_tag, ctx.cfg.paths.tables_dir))
+        unlearned_action = str(getattr(d, "unlearned_missing_action", "fill"))
+        unlearned_fill = ctx.unlearned_fill(costs)
         chunks = iter_chunks(data, filename, chunk_rows)
         first = next(chunks)
         _, report = validate(first, ctx.spec, values=ctx.clean_values, costs=costs,
-                             mapping=mapping)
+                             mapping=mapping, fill_values=unlearned_fill,
+                             unlearned_action=unlearned_action)
         if report.required_missing:
             raise BatchError(
                 "Your file is missing required column(s): "
                 + ", ".join(report.required_missing) + ". "
-                + report.required_rule_note,
+                + report.required_rule_note
+                + (" " + report.unlearned_rule_note
+                   if report.unlearned_missing else ""),
                 report.message(),
                 "Add the column(s), rename an existing one to match, or supply what "
                 "a derivation needs -- the Details list which inputs are missing for "
                 "each. Required features are those whose absence costs at least "
-                f"{0.010:.3f} concordance (FINDINGS 7d).")
+                f"{0.010:.3f} concordance (FINDINGS 7d), or that the model never saw "
+                f"missing in training (FINDINGS 7o).")
+        # Decided once, from the first block, and reused for every block after it:
+        # what stands in for an absent feature cannot vary down a file.
+        fills = dict(report.filled_from_training)
     except BatchError as exc:
         fail("check", exc)
     explainer_name = choose_explainer(ctx, explainer)
@@ -1190,8 +1490,10 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
     for block in blocks():
         n_blocks += 1
         block = block.reset_index(drop=True)
-        block, _ = validate(block, ctx.spec, values=ctx.clean_values,
-                            costs=costs, mapping=report.recognised or mapping)
+        block, block_validation = validate(
+            block, ctx.spec, values=ctx.clean_values, costs=costs,
+            mapping=report.recognised or mapping, fill_values=unlearned_fill,
+            unlearned_action=unlearned_action)
         n_read = len(block)
         block, dropped = duplicates.drop(block)
         block = block.reset_index(drop=True)
@@ -1207,7 +1509,7 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
             say("clean", "running")
         t_step = time.perf_counter()
         try:
-            X, flags, block_report = prepare(block, ctx)
+            X, flags, block_report = prepare(block, ctx, fill_values=fills)
         except BatchError as exc:
             fail("clean", exc)
         except Exception as exc:
@@ -1217,6 +1519,13 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
                 "merged header rows."))
         timed("clean", time.perf_counter() - t_step)
         block_report.rows_in = n_read
+        # A term is parsed in validate, before anything profiles the frame, so
+        # cleaning sees months rather than text and no longer counts the coercion
+        # itself. The count is carried over here, so cleaning_report.csv still
+        # reports the column as text that was read.
+        for col, n_text in block_validation.coerced_text.items():
+            block_report.coerced_text[col] = (
+                block_report.coerced_text.get(col, 0) + n_text)
         for rule, n in dropped.items():
             block_report.dropped_by_rule[rule] = (
                 block_report.dropped_by_rule.get(rule, 0) + n)
@@ -1253,6 +1562,8 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         # file, caught by decisions_match_threshold (FINDINGS 7m).
         pd12 = np.round(1.0 - surv[:, k12], RISK_DECIMALS)
         pd_h = np.round(1.0 - surv[:, k_h], RISK_DECIMALS)
+        if not said_score:
+            say("decide", "running", f"reject at {pd_col} >= {threshold:g}")
         decision = np.where(pd_h >= threshold, "reject", "approve")
         ids = (block[report.id_column].astype(str).to_numpy()
                if report.id_column and report.id_column in block.columns
@@ -1284,6 +1595,8 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
             front[name] = values
         front["features_present"] = len(report.present)
         front["features_missing"] = len(report.missing_optional)
+        front["features_filled_from_training"] = (
+            "; ".join(report.filled_from_training) or "")
         scored = pd.concat(
             [front, flags.reset_index(drop=True),
              block.drop(columns=[c for c in block.columns if c in front.columns],
@@ -1292,6 +1605,7 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         group = (block[agg.group_column]
                  if agg.group_column and agg.group_column in block.columns else None)
         agg.add(pd_h, decision, group, flags, {})
+        agg.add_segments(segment_labels(block, X, report), decision)
 
         rejected = scored[scored["decision"] == "reject"].copy()
         for col in REJECTED_REASON_COLUMNS:
@@ -1325,7 +1639,8 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         design_writer.close()
 
     agg.n_reasons_pending = agg.n_rejected
-    say("score", "done", f"{agg.n_approved:,} approved, {agg.n_rejected:,} rejected")
+    say("score", "done", f"{agg.n_rows:,} applicants scored")
+    say("decide", "done", f"{agg.n_approved:,} approved, {agg.n_rejected:,} rejected")
 
     # ----------------------------------------------------------- profile --
     t_step = time.perf_counter()
@@ -1383,6 +1698,7 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
     # ------------------------------------------------------------ checks --
     # Read back from disk, not from memory: the files are what leaves this run.
     say("files", "running", "checking the written outputs")
+    say("checks", "running", "reading the written files back")
     quality_inputs = input_quality_inputs(ctx, report)
     checks = verify_run(
         stamp_dir, n_rows_read=agg.n_rows, threshold=threshold,
@@ -1395,6 +1711,11 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
     files["validation_checks.csv"] = write_checks(
         checks, stamp_dir / "validation_checks.csv")
     blocking = blocking_failures(checks)
+    n_pass = sum(c.status == "PASS" for c in checks)
+    say("checks", "failed" if blocking else "done",
+        f"{len(blocking)} blocking check(s) failed: "
+        + ", ".join(c.name for c in blocking) if blocking
+        else f"{n_pass} of {len(checks)} passed")
     review_share = float(getattr(d, "fair_lending_review_share", 0.05))
     confirm_above = int(getattr(d, "explain_confirm_above", 1000))
 
@@ -1475,6 +1796,22 @@ def score_file(data, filename: str, cfg: Config, *, model_tag: str | None = None
         "features_missing_optional": "; ".join(report.optional_missing),
         "optional_missing_cost": (report.costs.describe(report.optional_missing)
                                   if report.costs is not None else ""),
+        # Kept out of optional_missing_cost on purpose. That column reports measured
+        # concordance, and a concordance figure is what let this case through: it is
+        # blind to the level shift an unlearned default produces (FINDINGS 7o).
+        "n_features_filled_from_training": len(report.filled_from_training),
+        "features_filled_from_training": "; ".join(
+            f"{k} = {v}" for k, v in report.filled_from_training.items()),
+        "features_filled_note": "; ".join(
+            f"{k}: absent from file, filled with training "
+            f"{'modal value' if isinstance(v, str) else 'median'} {v}, do not treat "
+            f"this applicant's result as fully reliable"
+            for k, v in report.filled_from_training.items()),
+        "features_unlearned_missing": "; ".join(report.unlearned_missing),
+        "unlearned_missing_action": report.unlearned_action,
+        "unlearned_missing_floor": (report.costs.unlearned_floor
+                                    if report.costs is not None else None),
+        "unlearned_rule_note": report.unlearned_rule_note,
         "schema_message": report.message(),
         "ignored_columns": "; ".join(report.ignored),
         "rows_out_of_range": agg.rows_out_of_range,
@@ -1670,7 +2007,11 @@ def load_result(run_dir: Path) -> BatchResult:
             ignored=raw.get("ignored", {}), missing_core=raw.get("missing_core", []),
             missing_optional=raw.get("missing_optional", []),
             present=raw.get("present", []) or [""] * raw.get("n_features_present", 0),
-            id_column=raw.get("id_column"), warnings=raw.get("warnings", []))
+            id_column=raw.get("id_column"), warnings=raw.get("warnings", []),
+            unlearned_missing=raw.get("unlearned_missing", []),
+            unlearned_rule_note=raw.get("unlearned_rule_note", ""),
+            unlearned_action=raw.get("unlearned_action", "fill"),
+            filled_from_training=raw.get("filled_from_training", {}) or {})
 
     drift_table = read("data_drift.csv")
     drift_result = None

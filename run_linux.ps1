@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Starts the creditsurv app in WSL (Linux), from PowerShell, in one command.
+    Starts the creditsurv API and its dashboard in WSL (Linux), in one command.
 
 .DESCRIPTION
     Windows Smart App Control blocks lightgbm and shap on this machine, so the app
@@ -13,13 +13,25 @@
          outputs/models and outputs/data only where the Windows file is newer;
       3. checks in WSL that lifelines, lightgbm, shap, streamlit and psutil import,
          and names anything missing with the command that fixes it;
-      4. starts Streamlit in WSL (headless, 0.0.0.0) and prints the URL.
+      4. starts the API (uvicorn, port 8000) and, as its client, the Streamlit
+         dashboard (port 8501) in WSL, and prints both URLs. Ctrl+C stops both.
 
     The Linux half is scripts/wsl_launch.sh. No Windows security setting is read or
     changed.
 
 .PARAMETER Port
     Port to serve on. Default 8501.
+
+.PARAMETER ApiPort
+    Port for the API. Default 8000.
+
+.PARAMETER ApiOnly
+    Start the API only (no dashboard): for scripts or another client. Holds this
+    window until Ctrl+C.
+
+.PARAMETER ApiBackground
+    Start the API only and return: it keeps serving after this window closes.
+    Stop it with the pid the script prints (also in outputs/logs/api.pid).
 
 .PARAMETER CheckOnly
     Stop after the sync and the import check; do not start the app.
@@ -41,6 +53,9 @@
 [CmdletBinding()]
 param(
     [int]$Port = 8501,
+    [int]$ApiPort = 8000,
+    [switch]$ApiOnly,
+    [switch]$ApiBackground,
     [switch]$CheckOnly,
     [switch]$CopyBack,
     [string]$Distro = ""
@@ -76,7 +91,7 @@ if ($CopyBack) {
 # because stopping the forwarder would break localhost access to WSL. System
 # processes are never touched.
 $Infrastructure = @("wslrelay", "wslhost", "wslservice", "vmmem", "vmmemWSL", "svchost", "System", "Idle")
-$Listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+$Listeners = Get-NetTCPConnection -LocalPort @($Port, $ApiPort) -State Listen -ErrorAction SilentlyContinue |
              Select-Object -ExpandProperty OwningProcess -Unique
 foreach ($procId in $Listeners) {
     $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
@@ -96,13 +111,16 @@ foreach ($procId in $Listeners) {
 }
 # Give Windows a moment to release the socket.
 for ($i = 0; $i -lt 10; $i++) {
-    $still = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+    $still = Get-NetTCPConnection -LocalPort @($Port, $ApiPort) -State Listen -ErrorAction SilentlyContinue |
              Where-Object { $Infrastructure -notcontains (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName }
     if (-not $still) { break }
     Start-Sleep -Milliseconds 300
 }
 
 # ------------------------------------------------ sync, check, serve --------
-$Mode = if ($CheckOnly) { "check" } else { "serve" }
-& wsl.exe @WslArgs -e bash $Script $Mode $RootWsl $Port
+$Mode = if ($CheckOnly) { "check" }
+        elseif ($ApiBackground) { "api-bg" }
+        elseif ($ApiOnly) { "api" }
+        else { "serve" }
+& wsl.exe @WslArgs -e env "CREDITSURV_API_PORT=$ApiPort" bash $Script $Mode $RootWsl $Port
 exit $LASTEXITCODE

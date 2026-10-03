@@ -18,7 +18,7 @@ opinion. Features are required or optional by the thresholds recorded there.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -27,14 +27,33 @@ import pandas as pd
 from .cleaning import coerce_numeric, parse_term_months
 from .provenance import PROJECT_ROOT
 
-__all__ = ["DERIVATIONS", "Derivation", "derive_features", "FeatureCosts",
-           "load_costs", "REQUIRED_DROP", "OPTIONAL_DROP", "ABLATION_COMMAND"]
+__all__ = ["DERIVATIONS", "Derivation", "derive_features", "expand_wanted",
+           "FeatureCosts",
+           "load_costs", "REQUIRED_DROP", "OPTIONAL_DROP", "ABLATION_COMMAND",
+           "UNLEARNED_MISSING_FLOOR"]
 
 # Thresholds recorded in FINDINGS 7d before use.
 REQUIRED_DROP = 0.010
 """Concordance drop at or above which a feature is required (or must be derivable)."""
 OPTIONAL_DROP = 0.002
 """Below this, an absence is reported without a cost claim."""
+
+UNLEARNED_MISSING_FLOOR = 0.01
+"""Training missing rate below which an absent column has no *learned* NaN route.
+
+The second rule of the required/optional gate, and the one the ablation table cannot
+supply. A LightGBM split sends NaN whichever way the training data taught it; a
+feature the training data never saw missing taught it nothing, so the booster falls
+back to its default direction -- a fixed, arbitrary, unmeasured choice that applies
+to every row at once. That is not degradation, it is a silent constant.
+
+Ablation measures the *discrimination* lost when a feature goes missing, and
+discrimination is a ranking. An unlearned default moves the whole PD distribution
+instead, which a ranking metric is blind to by construction. Measured on
+the file that found it (FINDINGS 7o): fico_midpoint costs 0.0057 concordance, below
+REQUIRED_DROP, yet its absence alone moved mean PD by +0.056 and the rejection rate
+by +13.9 points. The two rules catch different dangers and neither implies the other.
+"""
 
 ABLATION_COMMAND = "python scripts/03e_feature_ablation.py --model-tag {tag}"
 """How to produce the table a model needs before the measured rule can apply."""
@@ -146,6 +165,28 @@ DERIVATIONS: tuple[Derivation, ...] = (
 )
 
 
+def expand_wanted(wanted) -> list[str]:
+    """``wanted`` plus any derivable intermediate that one of them needs.
+
+    ``fico_midpoint`` needs ``fico_range_high``, which is itself derived from
+    ``fico_range_low``. ``fico_range_high`` is superseded, so it is not a model
+    feature and never appears in a spec -- and :func:`_apply` runs a rule only when
+    its own feature is wanted. Without the intermediate in the set the chain breaks
+    quietly: the raw column is recognised, the feature is not computed, and the file
+    is scored without it while the report claims the column was understood.
+    """
+    out = list(wanted)
+    derivable = {rule.feature for rule in DERIVATIONS}
+    for _pass in range(len(DERIVATIONS)):
+        for rule in DERIVATIONS:
+            if rule.feature not in out:
+                continue
+            for col in rule.needs:
+                if col in derivable and col not in out:
+                    out.append(col)
+    return out
+
+
 def derive_features(df: pd.DataFrame, wanted) -> tuple[pd.DataFrame, dict, dict]:
     """Compute what can be computed exactly.
 
@@ -186,23 +227,104 @@ def _apply(out: pd.DataFrame, wanted: set, derived: dict, blocked: dict) -> None
 
 @dataclass
 class FeatureCosts:
-    """Measured cost of a feature's absence, from the ablation table."""
+    """What a feature's absence costs, and whether the model can absorb it at all.
+
+    Two independent rules, because they answer different questions:
+
+    * **Ablation cost** (``per_feature``, from the 03e table): how much ranking
+      power the model loses when this column is missing. Required above
+      :data:`REQUIRED_DROP`.
+    * **Training missingness** (``train_missing``): whether the model has a *learned*
+      route for this column being missing at all. Below
+      :data:`UNLEARNED_MISSING_FLOOR` it does not, and its absence is an unlearned
+      default rather than a degradation -- see that constant for the measurement.
+
+    A feature can be cheap by the first rule and dangerous by the second. Nothing in
+    the ablation table can reveal that, which is why both are applied here.
+    """
 
     model_tag: str = ""
     baseline_concordance: float = float("nan")
     per_feature: dict[str, float] = field(default_factory=dict)
     per_group: dict[str, float] = field(default_factory=dict)
     source: str = ""
+    train_missing: dict[str, float] = field(default_factory=dict)
+    """Feature -> share of the model's training rows where it was missing. Empty
+    when unknown, and an unknown rate is never treated as a low one."""
+    unlearned_floor: float = UNLEARNED_MISSING_FLOOR
+    train_missing_rows: int = 0
+    train_missing_source: str = ""
+    structural: tuple[str, ...] = ()
+    """Features whose missingness is itself a trained input (FeatureSpec.
+    structural_missing). They carry a <name>_missing indicator the model was fitted
+    on, so a blank is an answer the model has a route for, and the unlearned-default
+    rule does not apply to them however rare that blank was."""
 
     def tier(self, feature: str) -> str:
         drop = self.per_feature.get(feature)
         if feature in STRUCTURALLY_REQUIRED:
             return "required"
+        # The ablation rule first, so a feature that is expensive *and* unlearned
+        # keeps the stronger tier rather than being reclassified into the new one.
+        if drop is not None and drop >= REQUIRED_DROP:
+            return "required"
+        if self.unlearned(feature):
+            return "unlearned_missing"
         if drop is None:
             return "unmeasured"
-        if drop >= REQUIRED_DROP:
-            return "required"
         return "optional_costed" if drop >= OPTIONAL_DROP else "optional_free"
+
+    def unlearned(self, feature: str) -> bool:
+        """Whether this feature's absence would hit an unlearned default.
+
+        False for a structural feature, whose missing indicator is trained, and
+        false when the training rate is unknown -- a guess in this direction would
+        quietly re-create the hole it exists to close.
+        """
+        if feature in self.structural:
+            return False
+        rate = self.train_missing.get(feature)
+        return rate is not None and rate < self.unlearned_floor
+
+    def unlearned_missing(self, features) -> list[str]:
+        """Those of ``features`` whose absence has no learned route, in order."""
+        return [f for f in features if self.unlearned(f)]
+
+    @property
+    def knows_train_missing(self) -> bool:
+        return bool(self.train_missing)
+
+    def with_train_missing(self, rates: dict[str, float], *, rows: int = 0,
+                           source: str = "", structural=(),
+                           floor: float | None = None) -> "FeatureCosts":
+        """A copy carrying the training missing rates, which the ablation table does
+        not hold. Separate from :func:`load_costs` because the rates come from the
+        model's own training rows, which only a loaded bundle has."""
+        return replace(self, train_missing={k: float(v) for k, v in rates.items()},
+                       train_missing_rows=int(rows), train_missing_source=source,
+                       structural=tuple(structural),
+                       unlearned_floor=(self.unlearned_floor if floor is None
+                                        else float(floor)))
+
+    def unlearned_note(self, features=()) -> str:
+        """One sentence naming the second rule and what it caught, for a reader who
+        has to decide whether to trust the run."""
+        if not self.knows_train_missing:
+            return ("The training missing rates for this model are not available, so "
+                    "the unlearned-default rule could not be applied. Absences were "
+                    "judged on ablation cost alone, which cannot see a shift in the "
+                    "level of predicted risk (FINDINGS 7o).")
+        caught = self.unlearned_missing(features) if features else []
+        head = (f"A feature missing in under {self.unlearned_floor:.0%} of the "
+                f"{self.train_missing_rows:,} training rows has no learned route for "
+                f"being absent, so its absence is an unlearned default rather than a "
+                f"degradation, whatever its ablation cost says (FINDINGS 7o).")
+        if not caught:
+            return head
+        return head + " Caught here: " + ", ".join(
+            f"{f} (missing in {self.train_missing.get(f, 0.0):.2%} of training rows, "
+            f"ablation cost {self.per_feature.get(f, float('nan')):.4f})"
+            for f in caught) + "."
 
     @property
     def measured(self) -> bool:
@@ -222,11 +344,16 @@ class FeatureCosts:
         the note says how to replace it with measurement.
         """
         if self.measured:
-            return (f"Required features come from the measured ablation of "
+            note = (f"Required features come from the measured ablation of "
                     f"{self.model_tag or 'this model'} ({self.source}): a feature is "
                     f"required when its absence costs at least {REQUIRED_DROP:.3f} "
                     f"concordance. {len(self.required())} of {len(self.per_feature)} "
                     f"features qualify.")
+            if self.knows_train_missing:
+                n = sum(1 for f in self.per_feature if self.unlearned(f))
+                note += (f" {n} of them are also governed by the second rule "
+                         f"below, which ablation cost does not decide.")
+            return note
         return ("This model has no ablation table, so a provisional list of required "
                 "columns is used instead of measurement. To replace it with measured "
                 "costs: "

@@ -16,7 +16,8 @@ from creditsurv.cleaning import fit_values
 from creditsurv.derive import (DERIVATIONS, REQUIRED_DROP, FeatureCosts,
                                derive_features, load_costs)
 from creditsurv.features.build import FeatureSpec
-from creditsurv.schema_match import normalise, propose_mapping
+from creditsurv.schema_match import (normalise, propose_mapping,
+                                      rename_targets)
 
 SPEC = FeatureSpec(
     numeric=("loan_amnt", "installment", "annual_inc", "dti", "open_acc",
@@ -95,14 +96,29 @@ def test_a_misleading_name_is_caught_by_content(values):
 
 
 def test_a_column_this_model_cannot_use_is_named_as_such(values):
-    """credit_score is understood, and then reported as useless to a model whose
-    spec has no score feature -- which is more informative than 'unknown column'."""
+    """bankruptcies is understood, and then reported as useless to a model whose
+    spec has no such feature -- which is more informative than 'unknown column'."""
+    df = pd.DataFrame({"loan_amnt": [10000.0], "annual_inc": [60000.0],
+                       "dti": [12.0], "bankruptcies": [0]})
+    proposal = propose_mapping(df, SPEC, values=values)
+    assert "bankruptcies" in proposal.recognised_but_unused
+    assert "does not use" in proposal.recognised_but_unused["bankruptcies"]
+    assert "bankruptcies" not in proposal.mapping()
+
+
+def test_a_credit_score_now_reaches_a_model_that_derives_from_it(values):
+    """Previously reported as 'this model does not use a credit score', which was
+    wrong: fico_range_low is not a feature, but fico_midpoint is derived from it
+    (FINDINGS 7c, 7o). The rename layer can now target a derivation's raw inputs, and
+    the intermediate fico_range_high is derived along the way."""
     df = pd.DataFrame({"loan_amnt": [10000.0], "annual_inc": [60000.0],
                        "dti": [12.0], "credit_score": [700]})
-    proposal = propose_mapping(df, SPEC, values=values)
-    assert "credit_score" in proposal.recognised_but_unused
-    assert "does not use" in proposal.recognised_but_unused["credit_score"]
-    assert "credit_score" not in proposal.mapping()
+    work, report = validate(df, SPEC, values=values, costs=FeatureCosts())
+    assert report.recognised["credit_score"] == "fico_range_low"
+    assert "fico_range_high" in report.derived      # the intermediate, not a feature
+    assert "fico_midpoint" in report.derived
+    assert "fico_midpoint" in report.present
+    assert work["fico_midpoint"].iloc[0] == pytest.approx(702.0)
 
 
 def test_two_columns_for_one_feature_are_never_mapped_silently(values):
@@ -323,3 +339,175 @@ def test_the_rule_is_recorded_for_the_reader(values):
                        costs=load_costs("full"))[1].to_dict()
     assert payload["required_rule"] == "measured"
     assert payload["required_rule_note"]
+
+
+# ------------------------------- 7o: the unlearned-default rule, and the synonyms --
+
+EMP_SPEC = FeatureSpec(
+    numeric=("loan_amnt", "annual_inc", "dti", "total_acc", "fico_midpoint",
+             "emp_length_years", "revol_util"),
+    categorical=("purpose",),
+    structural_missing=("emp_length_years", "revol_util"))
+
+
+def emp_training_frame(n=200, seed=1) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame({
+        "loan_amnt": rng.uniform(1000, 35000, n),
+        "annual_inc": rng.lognormal(11, 0.4, n),
+        "dti": rng.uniform(1, 38, n),
+        "total_acc": rng.integers(4, 60, n).astype(float),
+        "fico_midpoint": rng.uniform(620, 820, n),
+        "emp_length_years": rng.integers(0, 11, n).astype(float),
+        "revol_util": rng.uniform(0, 100, n),
+        "purpose": rng.choice(["car", "credit_card", "debt_consolidation"], n)})
+
+
+@pytest.fixture
+def emp_values():
+    return fit_values(emp_training_frame(), EMP_SPEC, source="train.parquet")
+
+
+def emp_costs(**train_missing) -> FeatureCosts:
+    """The costs object scoring builds: a measured table plus the training missing
+    rates, which the table itself does not carry."""
+    base = FeatureCosts(model_tag="emp", source="03e_ablation_emp.json", per_feature={
+        "loan_amnt": 0.0169, "annual_inc": 0.0167, "dti": 0.0047,
+        "total_acc": 0.0005, "fico_midpoint": 0.0057, "emp_length_years": 0.0024,
+        "revol_util": 0.0031, "purpose": 0.0063})
+    return base.with_train_missing(
+        train_missing, rows=20_000, source="train.parquet training split",
+        structural=EMP_SPEC.structural_missing, floor=0.01)
+
+
+def test_the_three_unrecognised_names_now_map(emp_values):
+    """The file that rejected 52.8% of applicants had all three columns in it, under
+    names the rename layer had no target for (FINDINGS 7o)."""
+    df = pd.DataFrame({
+        "loan_amnt": [10000.0], "annual_inc": [60000.0], "dti": [12.0],
+        "total_credit_lines": [24.0], "fico_low": [705.0], "fico_high": [709.0],
+        "employment_length": ["10+ years"], "revol_util": [40.0],
+        "purpose": ["car"]})
+    _, report = validate(df, EMP_SPEC, values=emp_values, costs=emp_costs())
+    assert report.recognised["total_credit_lines"] == "total_acc"
+    assert report.recognised["fico_low"] == "fico_range_low"
+    assert report.recognised["fico_high"] == "fico_range_high"
+    # The raw column, not the derived feature: parse_emp_length reads "10+ years".
+    assert report.recognised["employment_length"] == "emp_length"
+    assert "fico_midpoint" in report.derived
+    assert "emp_length_years" in report.derived
+    assert report.optional_missing == []
+    assert len(report.present) == len(EMP_SPEC.all_columns)
+
+
+def test_rename_targets_reaches_a_derivations_raw_inputs():
+    """fico_range_low, fico_range_high and emp_length are superseded, so they are not
+    features. Without them as targets no name could reach them at all."""
+    targets = rename_targets(EMP_SPEC, ["loan_amnt", "purpose"])
+    for raw in ("fico_range_low", "fico_range_high", "emp_length"):
+        assert raw in targets, raw
+    # and only for derivations whose own feature is wanted
+    have = list(EMP_SPEC.all_columns)
+    assert rename_targets(EMP_SPEC, have) == []
+
+
+def test_a_numeric_employment_column_still_reads_as_years(emp_values):
+    """One name, two readings, settled by content and not by table order: a column
+    of numbers is emp_length_years, because the parser would return NaN for it."""
+    df = pd.DataFrame({"loan_amnt": [10000.0], "annual_inc": [60000.0],
+                       "dti": [12.0], "total_acc": [24.0],
+                       "fico_midpoint": [707.0], "revol_util": [40.0],
+                       "employment_length": [7.0], "purpose": ["car"]})
+    _, report = validate(df, EMP_SPEC, values=emp_values, costs=emp_costs())
+    assert report.recognised["employment_length"] == "emp_length_years"
+    assert "emp_length_years" in report.present
+
+
+# ----------------------------------------------- the second rule of the gate --
+
+def missing_three() -> pd.DataFrame:
+    """Everything but total_acc, fico_midpoint and emp_length_years."""
+    return pd.DataFrame({"loan_amnt": [10000.0], "annual_inc": [60000.0],
+                         "dti": [12.0], "revol_util": [40.0], "purpose": ["car"]})
+
+
+def test_a_feature_never_missing_in_training_is_caught_whatever_it_costs(emp_values):
+    """total_acc costs 0.0005 concordance -- the cheapest feature in the table -- and
+    is still not safe to drop, because the model has no learned route for it."""
+    costs = emp_costs(total_acc=0.0, fico_midpoint=0.0, emp_length_years=0.0614,
+                      loan_amnt=0.0, annual_inc=0.0, dti=0.0, revol_util=0.0006,
+                      purpose=0.0)
+    fills = {"total_acc": 22.0, "fico_midpoint": 692.0, "emp_length_years": 6.0}
+    _, report = validate(missing_three(), EMP_SPEC, values=emp_values, costs=costs,
+                         fill_values=fills)
+    assert set(report.unlearned_missing) == {"total_acc", "fico_midpoint"}
+    # emp_length_years was missing in 6% of training rows, so its NaN route is
+    # learned and its absence is a real degradation, not an unlearned default.
+    assert "emp_length_years" not in report.unlearned_missing
+    assert report.filled_from_training == {"total_acc": 22.0, "fico_midpoint": 692.0}
+    assert report.required_missing == []
+
+
+def test_every_filled_feature_is_named_with_its_value(emp_values):
+    """A count or a coverage percentage cannot say which attribute was invented, so
+    each one gets its own line (FINDINGS 7o)."""
+    costs = emp_costs(total_acc=0.0, fico_midpoint=0.0, emp_length_years=0.0614)
+    _, report = validate(missing_three(), EMP_SPEC, values=emp_values, costs=costs,
+                         fill_values={"total_acc": 22.0, "fico_midpoint": 692.0})
+    message = report.message()
+    for feature, value in (("total_acc", "22.0"), ("fico_midpoint", "692.0")):
+        assert feature in message and value in message
+        assert any(feature in w and value in w for w in report.warnings), feature
+    assert "not fully reliable" in message or "fully reliable" in message
+    payload = report.to_dict()
+    assert payload["filled_from_training"] == {"total_acc": 22.0,
+                                               "fico_midpoint": 692.0}
+    assert payload["unlearned_rule_note"]
+
+
+def test_block_refuses_the_file_instead_of_filling_it(emp_values):
+    costs = emp_costs(total_acc=0.0, fico_midpoint=0.0, emp_length_years=0.0614)
+    _, report = validate(missing_three(), EMP_SPEC, values=emp_values, costs=costs,
+                         fill_values={"total_acc": 22.0, "fico_midpoint": 692.0},
+                         unlearned_action="block")
+    assert set(report.required_missing) == {"total_acc", "fico_midpoint"}
+    assert report.filled_from_training == {}
+    assert not report.ok
+    assert "total_acc" not in report.optional_missing
+
+
+def test_a_structural_feature_is_exempt_however_rare_its_blank(emp_values):
+    """revol_util was blank in 0.06% of training rows -- under the floor -- but its
+    missing indicator is a trained input, so the model has a route for it."""
+    costs = emp_costs(revol_util=0.0006, total_acc=0.3, fico_midpoint=0.3,
+                      emp_length_years=0.0614)
+    df = pd.DataFrame({"loan_amnt": [10000.0], "annual_inc": [60000.0],
+                       "dti": [12.0], "total_acc": [24.0],
+                       "fico_midpoint": [707.0], "purpose": ["car"]})
+    _, report = validate(df, EMP_SPEC, values=emp_values, costs=costs,
+                         fill_values={"revol_util": 50.0})
+    assert "revol_util" in report.optional_missing
+    assert report.unlearned_missing == []
+    assert report.filled_from_training == {}
+
+
+def test_an_unknown_training_rate_is_never_treated_as_a_low_one(emp_values):
+    """Silence, not safety: a model whose rates were not measured gets the old rule
+    and says so, rather than having the new one guess."""
+    costs = emp_costs()                      # no rates at all
+    _, report = validate(missing_three(), EMP_SPEC, values=emp_values, costs=costs,
+                         fill_values={"total_acc": 22.0})
+    assert not costs.knows_train_missing
+    assert report.unlearned_missing == []
+    assert report.filled_from_training == {}
+    assert "could not be applied" in report.unlearned_rule_note
+
+
+def test_the_ablation_rule_still_wins_where_it_applies(emp_values):
+    """A feature that is expensive *and* unlearned keeps the stronger tier, so the
+    new rule can only tighten the gate, never loosen it."""
+    costs = emp_costs(annual_inc=0.0, total_acc=0.0)
+    assert costs.tier("annual_inc") == "required"          # 0.0167 >= REQUIRED_DROP
+    assert costs.tier("total_acc") == "unlearned_missing"  # 0.0005, never missing
+    assert "annual_inc" in costs.required()
+    assert REQUIRED_DROP > 0.0005

@@ -22,6 +22,7 @@ import pytest
 from creditsurv import evidence_jobs as jobs
 from creditsurv import wsl_sync
 from creditsurv.provenance import PROJECT_ROOT
+from creditsurv import runner
 from creditsurv.runner import PROGRESS_ENV, launch, progress_env, tail_log
 
 linux_only = pytest.mark.skipif(not sys.platform.startswith("linux"),
@@ -157,6 +158,55 @@ class TestSafety:
         finally:
             stranger.kill()
             ours.kill()
+
+    def test_a_background_job_is_detached_on_both_platforms(self, tmp_path,
+                                                             monkeypatch):
+        """"Outlive whoever started me" has a different spelling per platform, and
+        only the Windows one was ever said. POSIX spells it setsid(), which Popen
+        calls start_new_session; without it every job in WSL -- the only place this
+        app runs -- stayed in the server's process group and terminal."""
+        seen: dict = {}
+
+        class _Fake:
+            pid = 4321
+
+            def __init__(self, cmd, **kw):
+                seen.update(kw)
+
+        monkeypatch.setattr(runner.subprocess, "Popen", _Fake)
+        launch([{"key": "s", "name": "n", "tag": "t", "args": ["-c", "pass"]}],
+               lock_tag="detach", runs_dir=tmp_path)
+        if os.name == "nt":
+            flags = seen["creationflags"]
+            assert flags & subprocess.DETACHED_PROCESS
+            assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            assert seen["start_new_session"] is True
+        assert seen["close_fds"] is True
+
+    @linux_only
+    def test_a_background_job_gets_its_own_session(self, tmp_path):
+        """The live version of the test above. A job shares nothing that can hang it
+        up: a Ctrl+C in the window that started the app, or closing that window,
+        signals every process in the server's foreground group -- which used to
+        include an hour-long 03d run."""
+        launch([{"key": "s", "name": "probe", "tag": "probe",
+                 "args": ["-c", "import time; time.sleep(30)"]}],
+               lock_tag="detachprobe", runs_dir=tmp_path / "runs")
+        lock = tmp_path / "runs" / "locks" / "detachprobe.lock"
+        pid = json.loads(lock.read_text(encoding="utf-8"))["pid"]
+        try:
+            for _ in range(50):
+                if os.getsid(pid) == pid:
+                    break
+                time.sleep(0.1)
+            assert os.getsid(pid) == pid                 # its own session leader
+            assert os.getpgid(pid) == pid                # its own process group
+            # /proc/<pid>/stat after the comm: state, ppid, pgrp, session, tty_nr.
+            stat = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            assert stat[4] == "0"                        # no controlling terminal
+        finally:
+            os.kill(pid, 9)
 
     def test_session_heartbeats_age_out(self, tmp_path):
         wsl_sync.note_session("a", True, tmp_path)
@@ -319,7 +369,17 @@ def test_copy_backs_run_one_at_a_time(tmp_path):
         'echo "end $(date +%s.%N)" >> "$2/order.txt"\n')
     root.mkdir()
     (root / ".synced_from_windows").write_text(str(win))
-    assert wsl_sync.copy_back_soon(root) and wsl_sync.copy_back_soon(root)
+    assert wsl_sync.copy_back_soon(root)
+    # Ask again only once the first copy is running, which is what "seconds apart"
+    # means here. The queue slot is held by the running request until its child has
+    # the one-at-a-time lock, so a request made in that first instant is dropped --
+    # harmlessly, because the copy it asked for has not begun either and the one
+    # that does begin copies whatever is on disk by then.
+    for _ in range(80):
+        if (win / "order.txt").exists():
+            break
+        time.sleep(0.1)
+    assert wsl_sync.copy_back_soon(root)
     for _ in range(80):
         if (win / "order.txt").exists() and \
                 (win / "order.txt").read_text().count("end") == 2:
@@ -340,6 +400,10 @@ def test_the_page_banner(tmp_path, monkeypatch, open_work, busy, expect):
     src, dst = _pair(tmp_path)
     (dst / ".synced_from_windows").write_text(str(src))
     monkeypatch.setattr(wsl_sync, "_pid_alive", lambda pid: pid == os.getpid())
+    # The page script below runs in this same process and replaces sync_now by
+    # assignment, which it cannot undo; registering the real one here is what puts
+    # it back at teardown, instead of leaving the fake for every later test.
+    monkeypatch.setattr(wsl_sync, "sync_now", wsl_sync.sync_now)
     if busy:
         locks = dst / "outputs" / "logs" / "runs" / "locks"
         locks.mkdir(parents=True)
@@ -359,7 +423,7 @@ def test_the_page_banner(tmp_path, monkeypatch, open_work, busy, expect):
             return True, "ok"
         wsl_sync.sync_now = fake_sync
         if open_work:
-            st.session_state["open_run"] = "x"
+            st.session_state["run_id"] = "x"        # a run open on the page
         _common.code_freshness(Path(root), restart=lambda: st.session_state.update(
             restarted=True))
 
@@ -373,10 +437,37 @@ def test_the_page_banner(tmp_path, monkeypatch, open_work, busy, expect):
         assert at.session_state["restarted"] is True
     elif expect == "button":
         assert "restarted" not in at.session_state
-        assert "Syncing restarts the app" in warnings
+        assert "Syncing restarts the dashboard" in warnings
         next(b for b in at.button if b.label == "Sync from Windows and restart").click().run()
         assert at.session_state["restarted"] is True
     else:
         assert "Not syncing while background job j runs" in warnings
     heartbeat = list((dst / "outputs" / "logs" / "sessions").glob("*.json"))
     assert heartbeat and json.loads(heartbeat[0].read_text())["open_work"] is open_work
+
+
+@linux_only
+def test_copy_back_queues_one_and_drops_the_rest(tmp_path):
+    """Phase 2 asks again at every checkpoint (60 s) while a copy over /mnt/c takes
+    longer than that, so queueing every request piled them up in the hundreds, each
+    one another full rsync still to run. One waiting is enough: it copies whatever is
+    on disk when it runs, which includes what the dropped requests asked about."""
+    if shutil.which("flock") is None:
+        pytest.skip("flock is not installed")
+    root, win = tmp_path / "wsl", tmp_path / "win"
+    (win / "scripts").mkdir(parents=True)
+    (win / "scripts" / "wsl_launch.sh").write_text(
+        'echo run >> "$2/runs.txt"; sleep 3\n')
+    root.mkdir()
+    (root / ".synced_from_windows").write_text(str(win))
+
+    assert wsl_sync.copy_back_soon(root) is True
+    time.sleep(0.8)                       # the first one holds the lock by now
+    for _ in range(5):
+        assert wsl_sync.copy_back_soon(root) is True
+    for _ in range(100):
+        time.sleep(0.1)
+        if (win / "runs.txt").exists() and (win / "runs.txt").read_text().count("run") == 2:
+            break
+    time.sleep(2)                         # a third would have started by now
+    assert (win / "runs.txt").read_text().count("run") == 2

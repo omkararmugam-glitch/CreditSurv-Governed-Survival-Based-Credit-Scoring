@@ -1,0 +1,163 @@
+{
+  "tag": "holdout_small_3_strat",
+  "n_boot": 500,
+  "reference": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E"
+  ],
+  "checks": {
+    "G": [
+      "annual_inc",
+      "mths_since_recent_inq"
+    ]
+  },
+  "checks_source": "command line",
+  "results": {
+    "G": [
+      {
+        "feature": "annual_inc",
+        "n_boot": 500,
+        "ci": 0.95,
+        "rank_target": 6.0,
+        "rank_target_lo": 2.0,
+        "rank_target_hi": 21.524999999999977,
+        "rank_reference": 2.0,
+        "rank_reference_lo": 2.0,
+        "rank_reference_hi": 6.0,
+        "rank_shift": 4.0,
+        "rank_shift_lo": -2.0,
+        "rank_shift_hi": 20.0,
+        "share_ratio": 0.6802221041594508,
+        "share_ratio_lo": 0.37737153354955916,
+        "share_ratio_hi": 1.229010427840238,
+        "reference_rank_range": "1-13",
+        "p_outside_reference_range": 0.208,
+        "shift_ci_excludes_zero": false,
+        "share_ci_excludes_one": false
+      },
+      {
+        "feature": "mths_since_recent_inq",
+        "n_boot": 500,
+        "ci": 0.95,
+        "rank_target": 15.0,
+        "rank_target_lo": 5.0,
+        "rank_target_hi": 37.0,
+        "rank_reference": 8.0,
+        "rank_reference_lo": 4.0,
+        "rank_reference_hi": 15.0,
+        "rank_shift": 7.0,
+        "rank_shift_lo": -5.0,
+        "rank_shift_hi": 30.0,
+        "share_ratio": 0.7166112439282549,
+        "share_ratio_lo": 0.43036349103773386,
+        "share_ratio_hi": 1.2554031925757236,
+        "reference_rank_range": "2-17",
+        "p_outside_reference_range": 0.272,
+        "shift_ci_excludes_zero": false,
+        "share_ci_excludes_one": false
+      }
+    ]
+  },
+  "provenance": {
+    "stage": "03b_bootstrap_segments",
+    "created_at": "2026-09-27T19:20:10+00:00",
+    "code": {
+      "commit": "9a082beaf95981c8c845b6054f1ccd9177a888bf",
+      "code_dirty": true,
+      "dirty_files": [
+        "onfig/config.yaml",
+        "scripts/01_build_labels.py",
+        "scripts/02_train_models.py",
+        "scripts/02r_recompute_metrics.py",
+        "scripts/02s_save_cleaning_values.py",
+        "scripts/03_explain.py",
+        "scripts/03b_bootstrap_segments.py",
+        "scripts/03d_explainer_validation.py",
+        "scripts/03e_feature_ablation.py",
+        "scripts/03f_settings_comparison.py",
+        "scripts/04_reject_inference.py",
+        "scripts/05_report.py",
+        "scripts/06_score_upload.py",
+        "scripts/check_provenance.py",
+        "scripts/inspect_data.py",
+        "src/creditsurv/batch.py",
+        "src/creditsurv/cleaning.py",
+        "src/creditsurv/config.py",
+        "src/creditsurv/derive.py",
+        "src/creditsurv/drift.py",
+        "src/creditsurv/eda.py",
+        "src/creditsurv/environment.py",
+        "src/creditsurv/explain/adverse_action.py",
+        "src/creditsurv/explain/compare.py",
+        "src/creditsurv/explain/naive_shap.py",
+        "src/creditsurv/explain/parallel.py",
+        "src/creditsurv/explain/segments.py",
+        "src/creditsurv/explain/survshap.py",
+        "src/creditsurv/features/build.py",
+        "src/creditsurv/io/loaders.py",
+        "src/creditsurv/models/cox.py",
+        "src/creditsurv/models/evaluate.py",
+        "src/creditsurv/pipeline.py",
+        "src/creditsurv/reporting/figures.py",
+        "src/creditsurv/runner.py",
+        "src/creditsurv/schema_match.py",
+        "src/creditsurv/status.py",
+        "config/models.yaml",
+        "scripts/07_model_registry.py",
+        "scripts/wsl_launch.sh",
+        "src/creditsurv.egg-info/",
+        "src/creditsurv/evidence_jobs.py",
+        "src/creditsurv/phase2.py",
+        "src/creditsurv/registry.py",
+        "src/creditsurv/run_checks.py",
+        "src/creditsurv/wsl_sync.py"
+      ]
+    },
+    "config": {
+      "path": "config/config.yaml",
+      "exists": true,
+      "bytes": 4997,
+      "mtime": "2026-09-26T19:40:59+00:00",
+      "sha256": "28abbddf73dd35ec745726882f207e790a387156ba398f8d042b1600f419296b"
+    },
+    "args": {
+      "config": "config/config.yaml",
+      "tag": "holdout_small_3_strat",
+      "n_boot": 500,
+      "segment": "grade",
+      "overwrite": false,
+      "target": "G",
+      "features": [
+        "annual_inc",
+        "mths_since_recent_inq"
+      ],
+      "reference": null
+    },
+    "inputs": {
+      "per_borrower_importance": {
+        "path": "outputs/tables/03_per_borrower_importance_holdout_small_3_strat.parquet",
+        "exists": true,
+        "bytes": 84273,
+        "mtime": "2026-09-27T19:20:09+00:00",
+        "sha256": "f8ed42cd9a987a77fdeda42f5f6b69c65692543e22a51b158c8ff3d995ffa6f0"
+      }
+    },
+    "outputs": {},
+    "environment": {
+      "python": "3.14.4",
+      "packages": {
+        "numpy": "2.5.3",
+        "pandas": "2.3.3",
+        "pyarrow": "25.0.1",
+        "scikit-learn": "1.9.1",
+        "lightgbm": "4.7.0",
+        "shap": "0.52.0",
+        "lifelines": "0.30.3",
+        "scipy": "1.18.1"
+      }
+    }
+  }
+}

@@ -690,30 +690,44 @@ class TestFairLendingMonitor:
 VIEWS = PROJECT_ROOT / "app" / "views"
 
 
-def _render(run_dir):
+def _render(run_dir, cfg):
+    """The result view of a finished run, drawn through an API over its folder."""
     pytest.importorskip("streamlit")
+    pytest.importorskip("fastapi")
+    import sys
+    from fastapi.testclient import TestClient
     from streamlit.testing.v1 import AppTest
 
-    def script(views, src, run):
+    from creditsurv.api.app import create_app
+    if str(VIEWS) not in sys.path:
+        sys.path.insert(0, str(VIEWS))
+    import _client
+
+    def script(views, run_id):
         import sys
         sys.path.insert(0, views)
-        sys.path.insert(0, src)
-        from creditsurv.batch import load_result
-        from _dashboard import render
-        render(load_result(run))
+        from _common import meta
+        from _dashboard import load, render
+        render(load(run_id), meta())
 
-    at = AppTest.from_function(script, default_timeout=180,
-                               kwargs={"views": str(VIEWS),
-                                       "src": str(PROJECT_ROOT / "src"),
-                                       "run": str(run_dir)})
-    at.run()
+    _client.use(TestClient(create_app(cfg, runs_dir=Path(run_dir).parent,
+                                      jobs_dir=Path(run_dir).parent / "_jobs",
+                                      watch_code=False)))
+    try:
+        at = AppTest.from_function(script, default_timeout=180,
+                                   kwargs={"views": str(VIEWS),
+                                           "run_id": Path(run_dir).name})
+        at.run()
+    finally:
+        _client.use(None)
     assert not at.exception, [e.value for e in at.exception]
     return at
 
 
 class TestDashboard:
-    def test_shows_registry_status_checks_and_fair_lending_review(self, geo_run):
-        at = _render(geo_run.run_dir)
+    def test_shows_registry_status_checks_and_fair_lending_review(self, geo_run,
+                                                                   tmp_path):
+        at = _render(geo_run.run_dir, _cfg(tmp_path))
         text = " ".join(m.value for m in list(at.success) + list(at.error)
                         + list(at.info) + list(at.warning))
         assert "Run checks: 9 of 9 passed" in text
@@ -725,7 +739,7 @@ class TestDashboard:
         cfg = _cfg(tmp_path)
         res = run_batch(tb._upload(), "a.csv", cfg, ctx=_ctx(cfg, status="candidate"),
                         runs_dir=tmp_path / "runs", allow_unapproved_model=True)
-        at = _render(res.run_dir)
+        at = _render(res.run_dir, cfg)
         errors = " ".join(e.value for e in at.error)
         assert "NOT FOR LENDING DECISIONS" in errors
         assert any("not approved for lending decisions" in i.value for i in at.info)
@@ -828,8 +842,11 @@ def test_every_caller_of_the_notice_builder_is_a_guarded_path():
 
 def test_both_dashboard_paths_and_the_cli_pass_the_override_explicitly():
     home = (VIEWS / "home.py").read_text(encoding="utf-8")
-    assert "allow_unapproved_model=allow_unapproved" in home      # inline run
-    assert '"--allow-unapproved-model"' in home                   # background run
+    assert '"allow_unapproved_model": allow_unapproved' in home   # sent to the API
+    api = (PROJECT_ROOT / "src/creditsurv/api/state.py").read_text(encoding="utf-8")
+    assert "allow_unapproved_model=req.allow_unapproved_model" in api   # in-process
+    app = (PROJECT_ROOT / "src/creditsurv/api/app.py").read_text(encoding="utf-8")
+    assert '"--allow-unapproved-model"' in app                    # background run
     cli_src = (PROJECT_ROOT / "scripts" / "06_score_upload.py").read_text(encoding="utf-8")
     assert "allow_unapproved_model=args.allow_unapproved_model" in cli_src
     # run_batch is the only place scoring decides; it defaults to refusing.

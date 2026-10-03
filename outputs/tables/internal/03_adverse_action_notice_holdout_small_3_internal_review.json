@@ -1,0 +1,105 @@
+{
+  "applicant_id": "APP-000015",
+  "decision": "declined",
+  "notice_date": "2026-09-27",
+  "model": "discrete_hazard",
+  "predicted_default_probability": 0.2666685415470835,
+  "horizon_months": 36,
+  "notice_status": "notice issued",
+  "n_reasons": 4,
+  "reasons": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "reason": "Number of accounts opened recently",
+      "attribution": -0.033392,
+      "feature_value": 6.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 2,
+      "feature": "loan_amnt",
+      "reason": "Amount of credit requested",
+      "attribution": -0.023161,
+      "feature_value": 25000.0,
+      "direction_consistent": true
+    },
+    {
+      "rank": 3,
+      "feature": "dti",
+      "reason": "Excessive obligations in relation to income",
+      "attribution": -0.007948,
+      "feature_value": 25.059999465942383,
+      "direction_consistent": true
+    },
+    {
+      "rank": 4,
+      "feature": "revol_util_missing",
+      "reason": "Proportion of available revolving credit currently in use",
+      "attribution": -0.006934,
+      "feature_value": 0,
+      "direction_consistent": false
+    }
+  ],
+  "top_adverse_drivers": [
+    {
+      "rank": 1,
+      "feature": "acc_open_past_24mths",
+      "attribution": -0.033392,
+      "disclosable": true
+    },
+    {
+      "rank": 2,
+      "feature": "loan_amnt",
+      "attribution": -0.023161,
+      "disclosable": true
+    },
+    {
+      "rank": 3,
+      "feature": "installment",
+      "attribution": -0.018001,
+      "disclosable": true
+    },
+    {
+      "rank": 4,
+      "feature": "num_tl_op_past_12m",
+      "attribution": -0.014362,
+      "disclosable": true
+    },
+    {
+      "rank": 5,
+      "feature": "mo_sin_rcnt_tl",
+      "attribution": -0.014193,
+      "disclosable": true
+    },
+    {
+      "rank": 6,
+      "feature": "num_op_rev_tl",
+      "attribution": -0.011935,
+      "disclosable": true
+    },
+    {
+      "rank": 7,
+      "feature": "addr_state",
+      "attribution": -0.008162,
+      "disclosable": false
+    },
+    {
+      "rank": 8,
+      "feature": "collections_12_mths_ex_med",
+      "attribution": -0.008071,
+      "disclosable": true
+    }
+  ],
+  "excluded_helpful_features": [
+    "mo_sin_old_rev_tl_op",
+    "tot_hi_cred_lim",
+    "num_il_tl",
+    "annual_inc",
+    "mths_since_last_record"
+  ],
+  "fair_lending_flags": [
+    "addr_state"
+  ],
+  "top_driver_not_disclosable": false
+}

@@ -120,10 +120,30 @@ FINDINGS section 6 (`05_report --dry-run`). Only `-Size Full` writes it. The com
 list lives in `src/creditsurv/plan.py`, shared with the UI below, and
 `tests/test_plan.py` pins it to exactly what the wrapper ran before that module existed.
 
-## Running the UI
+## Running the API and the dashboard
 
-A local Streamlit app wraps the same scripts. It is optional; everything it does
-is also available from the command line above.
+The pipeline runs behind a REST API ([creditsurv/api](src/creditsurv/api/app.py),
+FastAPI). The Streamlit dashboard is a client of that API: its pages call it over
+HTTP and import none of the scoring, explanation, registry or runner code. The API
+calls the same functions `06_score_upload.py` calls, so there are two ways in --
+the API (and the dashboard on it) and the command line -- and one pipeline.
+
+| Endpoint | Wraps |
+|---|---|
+| `POST /uploads`, `POST /uploads/{id}/check` | `read_upload`, `propose_mapping`, `validate` (the check scoring itself makes) |
+| `POST /runs` | `batch.score_file` in the API process with the shared model; files of `decision.background_above_mb` or more go to the background runner as `06_score_upload.py --run-dir` |
+| `GET /runs`, `/runs/{id}`, `/runs/{id}/status`, `/runs/{id}/log` | run history (`creditsurv.history`), `load_result`, the run's stage log, Phase 2 progress |
+| `POST /runs/{id}/phase2`, `POST /runs/{id}/explain-rows` | `phase2.launch_background` (the runner), `phase2.explain_run(only=...)` |
+| `GET /runs/{id}/files/{name}`, `/runs/{id}/bundle` | the run's outputs by name; `bundle_zip`. Decision files of a run that failed its checks are not served; downloads are held while Phase 2 is writing |
+| `GET /models`, `/models/{tag}`, `POST /models/{tag}/approve`, `POST /models/{tag}/evidence/{kind}` | `load_registry`, `assess`, `evaluate_rules`, `approve_model`, `evidence_jobs.refusal` + `launch_job` |
+| `GET /jobs`, `/jobs/{id}` | `runner.list_runs`, `read_status`, `tail_log` |
+| `GET/POST /retrain/...` | `plan.holdout_plan`, `status.preflight`, `runner.launch` (every refusal the page shows is enforced here too) |
+| `GET /overview`, `/research/...`, `/findings`, `/meta`, `/health` | `history.overview` + `history.processing_history` (the filtered history section), `status.*`, `findings_diff`, settings |
+
+Interactive documentation of every endpoint: http://localhost:8000/docs once it runs.
+A loaded model is cached in the API process and shared by every request
+(`GET /health` shows loads and cache hits). `scripts/api_score.py --file X.csv`
+scores a file through the running API and prints the time of every step.
 
 ### On this machine: run it in WSL
 
@@ -135,9 +155,11 @@ Linux under WSL2. One command, from the project folder in PowerShell:
 powershell -ExecutionPolicy Bypass -File .\run_linux.ps1
 ```
 
-Then open http://localhost:8501. The header of every page says **Running on Linux
-(WSL)** in green. If it says **Running on Windows** in red, you are looking at a
-Windows instance, which cannot score.
+This starts the API (port 8000) and the dashboard as its client (port 8501); Ctrl+C
+stops both. Open http://localhost:8501. The header of every page says **API on
+Linux (WSL)** in green. If it says **API on Windows** in red, the dashboard is
+talking to a Windows API, which cannot score. `-ApiOnly` starts the API alone;
+`-ApiPort 8001` moves it.
 
 [run_linux.ps1](run_linux.ps1) (with its Linux half,
 [scripts/wsl_launch.sh](scripts/wsl_launch.sh)):
@@ -153,11 +175,44 @@ Windows instance, which cannot score.
    newer (a Full run there writes it); in that case it is kept and the script says so;
 3. checks that lifelines, lightgbm, shap, streamlit and psutil import in the Linux
    venv, and names anything missing together with the command that fixes it;
-4. starts Streamlit in WSL with `--server.headless true --server.address 0.0.0.0`
-   and prints the URL. Ctrl+C stops it.
+4. starts the API (`uvicorn creditsurv.api.app:app` on 127.0.0.1:8000, log in
+   `outputs/logs/api.log`), waits until it answers, then starts Streamlit with
+   `--server.headless true --server.address 0.0.0.0` pointed at it, and prints both
+   URLs. Ctrl+C stops both.
 
 Edits made on Windows reach WSL only when the script runs again. Other switches:
 `-CheckOnly` (sync and check, do not start), `-Port 8502`, `-Distro <name>`.
+
+**Leaving something running after you walk away.** Two modes of
+[scripts/wsl_launch.sh](scripts/wsl_launch.sh), run from a WSL shell, start a job
+and give the shell back:
+
+```bash
+WIN=/mnt/c/Users/<you>/.../data\ science\ 2
+bash $WIN/scripts/wsl_launch.sh api-bg "$WIN"                      # the API
+bash $WIN/scripts/wsl_launch.sh run-bg "$WIN" -- \
+    scripts/03d_explainer_validation.py --model-tag full           # one long script
+```
+
+Each prints the pid and its log under `outputs/logs/` (`api.log`, or the script's
+own name), and keeps running after that shell, that window and the terminal are
+gone. Stop one with `kill <pid>`; the pid is also in `outputs/logs/<name>.pid`.
+
+Do not hand-roll this with `setsid cmd &` or `nohup cmd &`. The launcher is the
+session leader of the terminal `wsl.exe` hands it, so the instant it exits the
+kernel hangs that terminal's foreground group up -- and a job that has only just
+been forked is still in that group, because `setsid()` has not run yet. The job is
+then killed before its first line of output: nothing in `ps`, an empty log,
+immediately, which is exactly how this looks when it goes wrong. `setsid --fork`,
+`disown` and `nohup` do not change that ordering, and a `sleep` only improves the
+odds. `detach()` in the launcher has the job report its pid from inside its new
+session and does not return until it has, so there is nothing left to race; every
+background start in the script goes through it, and
+`tests/test_wsl_launcher.py::test_a_detached_job_outlives_the_launcher_and_its_terminal`
+drives it through a real pty to keep it that way. On the Python side,
+[creditsurv.runner](src/creditsurv/runner.py) starts background runs with
+`start_new_session=True`, which is already safe this way: `Popen` returns only
+after the child has called `setsid()` and `exec`ed.
 
 **Results stay in WSL until you copy them back.** Everything the app or the
 pipeline writes goes to `~/creditsurv/outputs`. To see finished work in File
@@ -198,24 +253,34 @@ Windows Firewall decides who else can connect.
 
 ### Anywhere Smart App Control is not in the way
 
+Two terminals, from the project root:
+
 ```bash
-./.venv/Scripts/python.exe -m streamlit run app/app.py  # from the project root
+python -m uvicorn creditsurv.api.app:app --host 127.0.0.1 --port 8000
+python -m streamlit run app/app.py        # CREDITSURV_API_URL overrides the address
 ```
 
-Install the UI dependencies with `pip install -e ".[ui]"`. This binds to
-`localhost` only and sends no usage statistics (`.streamlit/config.toml`). On this
-machine it starts, but the header reads **Running on Windows** and a banner explains
-the Smart App Control block. Pages that only read results still work; scoring does
-not.
+Install the dependencies with `pip install -e ".[ui]"` (Streamlit, FastAPI, uvicorn,
+httpx). Both bind to `localhost` only; the API has no authentication. On this
+machine an API started on Windows runs, but the header reads **API on Windows** and
+shows the Smart App Control explanation: pages that only read results work; scoring
+does not. **Approving a model** writes `config/models.yaml`, which the WSL copy
+replaces on every sync, so the API in WSL refuses to approve (as the page did). Approve
+with `python scripts/07_model_registry.py approve` on Windows, or from an API started
+on Windows.
+
+One status palette on every page: green done / passed, red failed / refused, blue
+working, amber needs a look (overridden, stopped, waiting on a choice), grey not yet.
 
 | Page | What it does |
 |---|---|
-| **Score applicants** (home) | Upload a CSV; it is checked, cleaned, profiled, scored and explained, then written out as CSVs with Regulation B reasons, notices, a cleaning report and a drift check. Described below. |
-| **Overview** | Every result tag and stage, with its provenance status: 🟢 verified (stamp re-hashes cleanly), 🟠 unverified (produced before stamping), 🔴 changed (an input or model it recorded has since been replaced), ⚪ not run. |
-| **Run pipeline** | Runs the holdout sequence from `creditsurv.plan` (identical to `run_holdout.ps1`). Defaults to **Small** with **overwrite off**. Before starting, it lists any existing outputs that would make a stage refuse (the same check the scripts do); ticking Overwrite shows exactly which files are replaced and asks for confirmation. Tags `full` / `dev` are refused. |
-| **Model registry** | Every model in `config/models.yaml` against the seven approval rules, each PASS/FAIL with its reason (the same check as `07_model_registry.py rules`). For a **candidate** it offers **Run ablation** (03e, 5-10 min) and **Run explainer validation** (03d, about an hour) as background jobs with a live progress bar (applicants explained or ablation features done, with an ETA) and a log you can come back to. Served from Windows, a job syncs the code to WSL, runs there, and copies the results back. One job at a time, never with `--overwrite`, and never a second run once evidence exists. When all seven pass, **Approve** re-checks them and records who approved it and when. Disabled in the WSL copy, whose `config/` is replaced on every sync. |
-| **Results viewer** | Tables, figures, the adverse-action notice and raw JSON for one tag, with its provenance status shown first. |
-| **FINDINGS** | FINDINGS.md by section, protected keep-blocks marked, and `git diff` against the last commit, warning if anything above section 6 changed. |
+| **Overview** (opens first) | A filter panel on the left (run, date range, model, lending-only) and three sections. **1 Processing history:** applicants decided, runs, rejected, overall approval rate and volume over the last 7 and 30 days, with applicants per run, approval rate per run and the fair-lending flag share against its review threshold -- across every run folder on disk, filtered by the panel. *Decided* means Phase 1 complete and every blocking check passed: a run that failed a check contributes no applicants, and because decisions and reasons finish separately, the section also says how many rejections are still without reasons. **2 This run:** the selected run's counts, mean risk and flag share, its predicted-risk histogram, approval mix, rejection reasons, and decisions by loan purpose, income band and state, then its data quality and drift. **3 Insights:** four cards, each a fixed template with one of the page's own numbers in it. Then the approved model with its held-out metrics, models awaiting approval, and the five most recent runs. All from the run folders and the registry, through `GET /overview` and `GET /runs/{id}`; runs stamped not for lending are left out of the rates unless you switch them in. Read-only -- no scoring happens here. |
+| **Score applicants** | Upload a CSV; confirm how its columns are read; decisions in minutes, reasons as they come. The upload is held by the API, so it survives every rerun and a change of page. Described below. |
+| **Run pipeline** | Any scoring run as eight stages -- check, clean, score, decide, drift, run checks, explain, notices -- each changing from pending to running to done or failed as it happens, with Phase 2's progress bar and the live log. |
+| **Results viewer** | Every scoring run, filterable by state and file name; open one for its summary, checks, charts and downloads. A second tab holds the research results (tables, figures, notices, raw JSON) with their provenance. |
+| **Model registry** | Every model against the seven approval rules, each PASS/FAIL with its reason. For a **candidate**: **Run ablation** (03e, 5-10 min) and **Run explainer validation** (03d, about an hour) as background jobs with live progress and a log -- refused, by the API, while another job runs, once the rule passes, or once evidence exists (never a second run to get a pass). When all seven pass, **Approve** re-checks them and records who and when. |
+| **Retrain models (research)** | The holdout sequence from `creditsurv.plan` (identical to `run_holdout.ps1`). Small and overwrite off by default; existing outputs listed before anything starts; tags `full` / `dev` refused. Not needed for scoring. |
+| **FINDINGS** | FINDINGS.md by section, protected keep-blocks marked, and `git diff` against the last commit. |
 
 ### Score applicants (the home page)
 
@@ -284,6 +349,7 @@ in git) and as download buttons:
 | `internal/` | **never sent to applicants**: `internal_review_flags.csv` (fair-lending flag, non-disclosable drivers, the feature and attribution behind each reason) and `internal_review_records.jsonl` |
 | `validation_checks.csv` | pass/fail of the eight post-run checks (FINDINGS 7l) |
 | `run_summary.csv` | one row: file, row count, model tag, registry status and SHA-256, threshold, approval rate, fair-lending share, checks, feature coverage, timings |
+| `aggregates.json` | the whole-file statistics the charts are drawn from, so a 500 MB upload costs no more to display than a 25 KB one: the predicted-risk histogram, the reason counts, and decisions by loan purpose, income band and state (`by_segment`). State is **not** a model feature and is recorded for fair-lending monitoring of outcomes (FINDINGS 7c, 7l) |
 | `provenance.json` | the same provenance stamp the pipeline stages write; written only when every blocking check passed |
 
 **Only an approved model decides.** [config/models.yaml](config/models.yaml) records

@@ -1,138 +1,126 @@
-"""Helpers shared by the pages: palette, header, config. Read-only."""
+"""What every page shares: the palette, the status colours, the header, and the
+settings the pages keep across a rerun. Presentation only -- the pipeline is behind
+the API (_client.py)."""
 
 from __future__ import annotations
 
+import html
+import math
 from pathlib import Path
 
 import streamlit as st
 
-from creditsurv.config import load_config
-from creditsurv.environment import runtime_label
-from creditsurv.provenance import PROJECT_ROOT
+from _client import ApiError, api, base_url, overridden
 
-CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+ROOT = Path(__file__).resolve().parents[2]
 
-# One palette for every chart in the app; the interface colours are in
-# .streamlit/config.toml.
+# One palette for every chart and every badge in the app; the interface colours are
+# in .streamlit/config.toml.
 APPROVE = "#2e7d5b"
 REJECT = "#b3402f"
 ACCENT = "#2f5d8a"
 MUTED = "#6b7280"
+AMBER = "#b7791f"
 
-STATE_ICON = {"verified": "🟢", "unverified": "🟠", "changed": "🔴", "not run": "⚪",
-              "pending": "⚪", "running": "🔵", "starting": "🔵", "completed": "🟢",
-              "failed": "🔴", "interrupted": "🟠"}
-
-
-@st.cache_resource
-def paths():
-    return load_config(CONFIG_PATH).paths
-
-
-# ------------------------------------------------ things worth keeping loaded --
-# Loading a model means unpickling the bundle and reading its whole training file
-# to draw the SHAP background: ~2-3 s and a ~3 GB peak each time. Without a cache
-# the upload page did it twice per file (preview, then scoring). With one, it is
-# done once per model per server, and reused by every upload and every click.
-
-@st.cache_resource(max_entries=2, show_spinner="Loading the model (once; it stays "
-                                               "in memory for later uploads)...")
-def _cached_context(config_path: str, tag: str, model_name: str, key: tuple):
-    from creditsurv.batch import load_context
-
-    return load_context(load_config(config_path), tag, model_name)
+# ----------------------------------------------------------- status colours --
+# Every state any page shows maps to one of five meanings, drawn the same way
+# everywhere: green = done / passed, red = failed / refused, blue = working,
+# amber = needs a look (overridden, stopped, waiting on a choice), grey = not yet.
+_KIND = {
+    "done": "ok", "pass": "ok", "passed": "ok", "finished": "ok", "completed": "ok",
+    "verified": "ok", "approved": "ok", "stable": "ok",
+    "failed": "bad", "fail": "bad", "failed checks": "bad", "refused": "bad",
+    "changed": "bad", "large": "bad", "deprecated": "bad",
+    "running": "work", "starting": "work", "explaining": "work", "finishing": "work",
+    "queued": "work",
+    "overridden": "warn", "interrupted": "warn", "phase 2 stopped": "warn",
+    "reasons pending": "warn", "awaiting phase 2 choice": "warn", "awaiting choice": "warn",
+    "unverified": "warn", "moderate": "warn", "candidate": "warn", "stopped": "warn",
+    "not started": "wait", "pending": "wait", "not run": "wait", "skipped": "wait",
+    "benchmark": "wait", "incomplete": "wait", "insufficient": "wait", "unknown": "warn",
+}
+KIND_COLOUR = {"ok": APPROVE, "bad": REJECT, "work": ACCENT, "warn": AMBER, "wait": MUTED}
+KIND_DOT = {"ok": "🟢", "bad": "🔴", "work": "🔵", "warn": "🟠", "wait": "⚪"}
 
 
-def cached_context(tag: str, model_name: str, config_path=CONFIG_PATH):
-    """The loaded model, from memory when it is already there.
-
-    Keyed on :func:`creditsurv.batch.context_key` -- the model file, its cleaning
-    values, its training data and the settings -- so replacing any of them loads
-    afresh rather than serving a stale model.
-    """
-    from creditsurv.batch import context_key
-
-    cfg = load_config(config_path)
-    return _cached_context(str(config_path), tag, model_name,
-                           context_key(cfg, tag, model_name))
+def kind(state) -> str:
+    return _KIND.get(str(state or "").strip().lower(), "wait")
 
 
-@st.cache_data(max_entries=4, show_spinner=False)
-def model_statuses(config_path: str, models: tuple, registry_mtime: int) -> dict:
-    """Registry status per model for the model picker, re-read when the registry
-    file changes -- not on every click."""
-    from creditsurv.registry import assess
-
-    cfg = load_config(config_path)
-    return {m: assess(m, cfg).label for m in models}
+def dot(state) -> str:
+    """The one-character status mark used in tables."""
+    return KIND_DOT[kind(state)]
 
 
-@st.cache_resource(max_entries=4, show_spinner=False)
-def _cached_result(run_dir: str, provenance_mtime: int):
-    from creditsurv.batch import load_result
-
-    return load_result(Path(run_dir))
+def colour(state) -> str:
+    return KIND_COLOUR[kind(state)]
 
 
-def cached_result(run_dir):
-    """A finished run's result, read once and re-read only when the run writes
-    (Phase 2 updates provenance.json at each checkpoint)."""
-    prov = Path(run_dir) / "provenance.json"
-    return _cached_result(str(run_dir), prov.stat().st_mtime_ns if prov.exists() else 0)
+def badge(state, text: str | None = None) -> str:
+    """An inline status pill, HTML. Use with st.markdown(..., unsafe_allow_html=True)."""
+    c = colour(state)
+    return (f"<span style='display:inline-block;border:1px solid {c};color:{c};"
+            f"background:{c}14;border-radius:999px;padding:.05rem .55rem;"
+            f"font-size:.78rem;font-weight:600;white-space:nowrap;'>"
+            f"{html.escape(str(text if text is not None else state))}</span>")
 
 
-# ------------------------------------------- what survives leaving the page --
-# Streamlit forgets a page's widgets -- the uploader's file included -- as soon as
-# another page is shown. The upload and the choices made around it are therefore
-# kept in session state here, so coming back shows the same file and result.
-
-HELD_DIR = PROJECT_ROOT / "outputs" / "runs" / "_uploads"
+def status_box(state, message: str) -> None:
+    """A whole-width message in the colour of its state."""
+    {"ok": st.success, "bad": st.error, "work": st.info, "warn": st.warning,
+     "wait": st.info}[kind(state)](message)
 
 
-class HeldUpload:
-    """An upload copied to disk once, read back on every rerun. Offers the parts of
-    Streamlit's UploadedFile the page uses, without keeping a 450 MB file in memory
-    for as long as the session lasts."""
+# -------------------------------------------------------------- the header --
 
-    def __init__(self, up, held_dir: Path = HELD_DIR):
-        import re
-
-        self.name, self.size, self.file_id = up.name, up.size, up.file_id
-        safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{up.file_id}_{Path(up.name).name}")
-        held_dir.mkdir(parents=True, exist_ok=True)
-        self.path = held_dir / safe[:120]
-        with open(self.path, "wb") as fh:
-            fh.write(up.getbuffer())
-
-    def getvalue(self) -> bytes:
-        return self.path.read_bytes()
-
-    def head(self, n: int) -> bytes:
-        with open(self.path, "rb") as fh:
-            return fh.read(n)
-
-    def discard(self) -> None:
-        self.path.unlink(missing_ok=True)
+@st.cache_data(ttl=30, show_spinner=False)
+def _meta(url: str) -> dict:
+    return api().get("/meta")          # a failure raises, and is not cached
 
 
-def hold_upload(up) -> "HeldUpload | None":
-    """The file this session is working on: a new upload replaces the held one
-    (and deletes its copy); no upload keeps what was held."""
-    held = st.session_state.get("held_upload")
-    if up is not None and (held is None or held.file_id != up.file_id
-                           or not held.path.exists()):
-        if held is not None:
-            held.discard()
-        held = st.session_state["held_upload"] = HeldUpload(up)
-    return held
+def meta() -> dict:
+    """The API's settings and fixed wording; stops the page if the API is down."""
+    try:
+        return api().get("/meta") if overridden() else _meta(base_url())
+    except ApiError as exc:
+        exc.show()
+        st.stop()
 
 
-def drop_upload() -> None:
-    held = st.session_state.pop("held_upload", None)
-    if held is not None:
-        held.discard()
-    st.session_state.pop("mapping_base", None)
+def page_header(title: str, subtitle: str = "") -> dict:
+    """The identity every page shares, above its own content. Says where the API
+    runs -- scoring works only where lightgbm loads -- and returns /meta."""
+    m = meta()
+    where = m.get("runtime", "?")
+    tint = APPROVE if not m.get("blocked_imports") else REJECT
+    st.markdown(
+        f"<div style='border-bottom:1px solid #d7dce5;margin-bottom:1.1rem;'>"
+        f"<div style='display:flex;justify-content:space-between;align-items:center;"
+        f"gap:.5rem;flex-wrap:wrap;'>"
+        f"<div style='color:{ACCENT};font-weight:700;letter-spacing:.14em;"
+        f"font-size:.72rem;text-transform:uppercase;'>creditsurv &nbsp;·&nbsp; "
+        f"survival-based credit scoring</div>"
+        f"<div title='Where the API that does the work is running' style='color:{tint};"
+        f"border:1px solid {tint};border-radius:999px;padding:.05rem .6rem;"
+        f"font-size:.72rem;font-weight:600;white-space:nowrap;'>"
+        f"API on {html.escape(where)}</div></div>"
+        f"<h1 style='margin:.1rem 0 .3rem 0;font-size:1.9rem;'>{html.escape(title)}</h1>"
+        f"<p style='color:{MUTED};margin:0 0 .9rem 0;'>{html.escape(subtitle)}</p></div>",
+        unsafe_allow_html=True)
+    if m.get("blocked_imports"):
+        # The API's own explanation (Smart App Control, and what still works).
+        st.error(m.get("blocked_message") or (
+            "The API cannot score here: " + ", ".join(m["blocked_imports"])
+            + " cannot be loaded on this machine. Start it in WSL with run_linux.ps1."),
+            icon=":material/gpp_bad:")
+    code_freshness()
+    return m
 
+
+# -------------------------------------------- what survives leaving the page --
+# Streamlit forgets a page's widgets as soon as another page is shown. The choices
+# made on a page are kept in session state here, so coming back shows the same
+# ones. The upload itself and the run are held by the API; the page keeps only ids.
 
 def remember(key: str, default=None):
     """Give widget ``key`` back the value it had before the page was left. Call it
@@ -150,32 +138,7 @@ def keep(*keys: str) -> None:
             st.session_state[f"_kept_{k}"] = st.session_state[k]
 
 
-def page_header(title: str, subtitle: str = "") -> None:
-    """The identity every page shares, above its own content.
-
-    Carries a label saying where the server runs, because a Windows instance and a
-    WSL instance of this app look identical and only one of them can score.
-    """
-    where = runtime_label()
-    tint = APPROVE if where == "Linux (WSL)" else REJECT if where == "Windows" else MUTED
-    st.markdown(
-        f"<div style='border-bottom:1px solid #d7dce5;margin-bottom:1.1rem;'>"
-        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
-        f"<div style='color:{ACCENT};font-weight:700;letter-spacing:.14em;"
-        f"font-size:.72rem;text-transform:uppercase;'>creditsurv &nbsp;·&nbsp; "
-        f"survival-based credit scoring</div>"
-        f"<div title='The machine this app is running on' style='color:{tint};"
-        f"border:1px solid {tint};border-radius:999px;padding:.05rem .6rem;"
-        f"font-size:.72rem;font-weight:600;white-space:nowrap;'>"
-        f"Running on {where}</div></div>"
-        f"<h1 style='margin:.1rem 0 .3rem 0;font-size:1.9rem;'>{title}</h1>"
-        f"<p style='color:{MUTED};margin:0 0 .9rem 0;'>{subtitle}</p></div>",
-        unsafe_allow_html=True)
-    code_freshness()
-
-
-SYNC_NOTE = PROJECT_ROOT / "outputs" / "logs" / "last_code_sync.json"
-
+# ------------------------------------------------ code sync in the WSL copy --
 
 def _session_id() -> str:
     try:
@@ -186,15 +149,14 @@ def _session_id() -> str:
         return "bare"
 
 
-def code_freshness(root: Path = PROJECT_ROOT, restart=None) -> None:
+def code_freshness(root: Path = ROOT, restart=None) -> None:
     """In the WSL copy: say when Windows has newer code, and sync it where safe.
 
     The rules are :func:`creditsurv.wsl_sync.auto_sync`, the same ones the
     server-side watcher (started in app.py) applies every 20 s: no background job
-    or Phase 2 running, and no browser session with work open. This page reports
-    its own session's state for the watcher, syncs straight away when it is safe,
-    and otherwise says why not and offers a button. Never serves stale code
-    silently.
+    or Phase 2 running, the API not scoring, and no browser session with work
+    open. This is the dashboard server keeping its own code current; it touches no
+    pipeline code.
     """
     import json
     import time
@@ -205,8 +167,7 @@ def code_freshness(root: Path = PROJECT_ROOT, restart=None) -> None:
     source = windows_source(root)
     if source is None:
         return
-    open_work = bool(st.session_state.get("upload_runs") or st.session_state.get("open_run")
-                     or st.session_state.get("held_upload"))
+    open_work = bool(st.session_state.get("upload_id") or st.session_state.get("run_id"))
     note_session(_session_id(), open_work, root)
     try:
         note = json.loads((root / "outputs" / "logs" / "last_code_sync.json")
@@ -225,15 +186,13 @@ def code_freshness(root: Path = PROJECT_ROOT, restart=None) -> None:
     busy = sync_blockers(root)
     if busy:
         st.warning(f"**Windows has newer code** than this app is running ({examples}). "
-                   f"Not syncing while {', '.join(busy)} runs: it would finish on old "
-                   f"code with new code arriving under it. It syncs by itself once "
-                   f"that is done; until then this page serves the code it started "
-                   f"with.", icon=":material/sync_problem:")
+                   f"Not syncing while {', '.join(busy)} runs. It syncs by itself once "
+                   f"that is done.", icon=":material/sync_problem:")
         return
     if open_work:
         st.warning(f"**Windows has newer code** than this app is running ({examples}). "
-                   f"Syncing restarts the app (every open tab reconnects); your run "
-                   f"stays on disk (Open a previous run).", icon=":material/sync_problem:")
+                   f"Syncing restarts the dashboard (every open tab reconnects); your run "
+                   f"is held by the API and stays.", icon=":material/sync_problem:")
         if not st.button("Sync from Windows and restart", key="sync_code_now"):
             return
     with st.spinner(f"Windows has newer code ({examples}); syncing it into {root}..."):
@@ -246,8 +205,99 @@ def code_freshness(root: Path = PROJECT_ROOT, restart=None) -> None:
         st.warning(f"Not synced: {what}.", icon=":material/sync_problem:")
 
 
-def rel(p: Path) -> str:
+# ------------------------------------------------------------ the KPI cards --
+# ``st.metric`` never wraps: the front end renders both the label and the value with
+# ``truncate`` set, so anything wider than the card is cut to an ellipsis. Six
+# ``st.columns`` on a laptop leave each card about 150 px, which is narrower than
+# most of this app's labels -- hence "Appli...", "Overa...", "34...". Columns cannot
+# fix that, because they only stack below 640 px; they just keep shrinking.
+#
+# So every KPI row in the app is drawn by :func:`kpi_row`: a wrapping horizontal
+# container whose cards each carry a pixel width wide enough for their own text.
+# A card in a horizontal container with a pixel width gets ``flex: 0 0 Npx``, which
+# cannot shrink, and the row wraps onto a second line once the window runs out.
+# Fewer cards per row, never a cut label or a cut number.
+
+KPI_LABEL_PX = 14.0      # theme fontSizes.sm -- the metric label
+KPI_VALUE_PX = 36.0      # theme fontSizes.metricValueFontSize (2.25rem)
+KPI_CARD_PADDING = 56    # the bordered card's own padding, both sides
+KPI_HELP_PX = 26         # the "?" a help tooltip adds beside the label
+KPI_MIN_WIDTH = 240      # the floor, so an ordinary row stays even
+KPI_STEP = 20            # widths round up to this, so near-equal cards come out equal
+
+# Per-character widths as a fraction of the font size, rounded up rather than
+# measured: too wide only costs a card per row, too narrow puts the ellipsis back.
+_WIDE_CHARS = set("ABCDEFGHJKLMNOPQRSTUVWXYZmwMW%&@")
+_NARROW_CHARS = set("ijltfrI.,:;'`|!()[] ")
+
+
+def text_px(text, font_px: float) -> float:
+    """A deliberately generous width for one line of the interface font."""
+    em = 0.0
+    for ch in str(text):
+        em += 0.36 if ch in _NARROW_CHARS else 0.86 if ch in _WIDE_CHARS else 0.62
+    return em * font_px
+
+
+def kpi_width(label, value, has_help: bool = False,
+              min_width: int = KPI_MIN_WIDTH) -> int:
+    """How wide a metric card has to be for this label and this value to fit."""
+    need = max(text_px(label, KPI_LABEL_PX) + (KPI_HELP_PX if has_help else 0),
+               text_px(value, KPI_VALUE_PX)) + KPI_CARD_PADDING
+    return max(int(min_width), int(math.ceil(need / KPI_STEP) * KPI_STEP))
+
+
+def kpi_row(items, min_width: int = KPI_MIN_WIDTH) -> None:
+    """One row of KPI cards that wraps rather than truncating.
+
+    ``items`` are ``(label, value)`` or ``(label, value, help)``. Every card is
+    sized to its own text, so a long value widens that card alone and the row
+    wraps; the rest stay at ``min_width`` and the row reads as a row.
+    """
+    with st.container(horizontal=True, wrap=True, gap="small"):
+        for label, value, *rest in items:
+            tip = rest[0] if rest else None
+            st.metric(label, value, help=tip, border=True,
+                      width=kpi_width(label, value, bool(tip), min_width))
+
+
+def card_row(cards: list[str], width: int = 300) -> None:
+    """The same wrapping row for the hand-drawn HTML cards (the insights).
+
+    Their text wraps, so they were never cut the way a metric is -- but four of
+    them in four columns leaves each one about 270 px, which is a headline over
+    three lines. Same row, same rule: a width each, and wrap.
+    """
+    with st.container(horizontal=True, wrap=True, gap="small"):
+        for card in cards:
+            with st.container(width=int(width)):
+                st.markdown(card, unsafe_allow_html=True)
+
+
+def nav_link(page: str, label: str, icon: str | None = None) -> None:
+    """A link to another page of the app; plain text where the page is drawn on its
+    own (a test), since page links resolve only inside app.py's navigation."""
     try:
-        return Path(p).resolve().relative_to(PROJECT_ROOT).as_posix()
+        st.page_link(page, label=label, icon=icon)
+    except Exception:
+        st.caption(f"→ {label} (in the menu)")
+
+
+def fmt_seconds(seconds) -> str:
+    if seconds is None:
+        return "working it out"
+    seconds = float(seconds)
+    if seconds < 90:
+        return f"{seconds:.0f} s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f} min"
+    return f"{seconds / 3600:.1f} h"
+
+
+def when(stamp) -> str:
+    """``2026-09-28T17:36:35`` -> ``28 Sep 17:36``."""
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(str(stamp)).strftime("%d %b %H:%M")
     except ValueError:
-        return str(p)
+        return str(stamp or "")

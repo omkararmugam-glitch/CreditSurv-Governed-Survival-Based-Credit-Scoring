@@ -1,0 +1,28 @@
+INTERNAL REVIEW RECORD -- NOT PART OF THE APPLICANT NOTICE -- NEVER SEND TO THE APPLICANT
+
+Applicant ID:  APP-000035
+Decision:      declined
+Status:        notice issued
+Model:         discrete_hazard
+Predicted 36-month default probability: 0.9905
+
+FAIR-LENDING REVIEW FLAG
+Non-disclosable features were among the strongest adverse drivers: addr_state. They were excluded from the stated reasons. A model whose principal driver cannot lawfully be disclosed requires fair-lending review before deployment.
+
+Strongest adverse drivers (before filtering):
+  1. installment                      -0.135199
+  2. acc_open_past_24mths             -0.120513
+  3. inq_last_6mths                   -0.117424
+  4. total_rev_hi_lim                 -0.116453
+  5. mo_sin_old_rev_tl_op             -0.111265
+  6. mths_since_last_major_derog_missing -0.070271
+  7. dti                              -0.064853
+  8. addr_state                       -0.060434   <- NOT DISCLOSABLE
+
+Stated reasons and the features behind them:
+  1. Number of accounts opened recently  [acc_open_past_24mths = 9.0, -0.120513]
+  2. Number of recent inquiries on credit bureau report  [inq_last_6mths = 2.0, -0.117424]
+  3. Amount of revolving credit available  [total_rev_hi_lim = 3300.0, -0.116453]
+  4. Recency of a serious derogatory credit item  [mths_since_last_major_derog_missing = 1, -0.070271]
+
+Helped the applicant (never a reason): num_actv_bc_tl, tot_cur_bal, delinq_2yrs, mths_since_last_delinq, tot_coll_amt

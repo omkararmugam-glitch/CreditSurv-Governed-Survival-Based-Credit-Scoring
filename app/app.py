@@ -1,16 +1,17 @@
-"""Streamlit front end for the creditsurv pipeline.
+"""Streamlit front end for creditsurv: a client of the creditsurv API.
 
-A thin layer over the existing scripts: it runs them only through
-``creditsurv.plan`` (the same commands ``run_holdout.ps1`` runs) and
-``creditsurv.runner``, and reads results the scripts wrote. It contains no
-modelling code, never passes ``--overwrite`` unless the user ticks it, and every
-stage still stamps its own provenance.
+The pages call the API over HTTP (app/views/_client.py) and import none of the
+scoring, explanation, registry or runner code; the API calls those, the same
+functions scripts/06_score_upload.py calls. Start both together:
 
-Launch from the project root. On a machine where Smart App Control blocks lightgbm
-and shap, serve it from WSL instead (README, "Running the UI"):
+    powershell -ExecutionPolicy Bypass -File .\\run_linux.ps1        # in WSL
 
-    powershell -ExecutionPolicy Bypass -File .\\run_linux.ps1
-    .venv\\Scripts\\python.exe -m streamlit run app/app.py     # elsewhere
+or, where lightgbm is not blocked, in two terminals from the project root:
+
+    python -m uvicorn creditsurv.api.app:app --host 127.0.0.1 --port 8000
+    python -m streamlit run app/app.py
+
+``CREDITSURV_API_URL`` points the dashboard at an API elsewhere.
 """
 
 from __future__ import annotations
@@ -20,45 +21,42 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-for _p in (ROOT / "src", ROOT / "app" / "views"):     # package + page helpers
+for _p in (ROOT / "src", ROOT / "app" / "views"):     # page helpers (+ wsl_sync)
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-os.chdir(ROOT)                    # config paths are relative to the project root
+os.chdir(ROOT)
 
 import streamlit as st  # noqa: E402
 
 st.set_page_config(page_title="creditsurv", layout="wide")
 
-# Checked before any page loads a model, so a blocked native library produces a
-# sentence rather than an OSError from inside pickle.load. The pages that only read
-# results still work, so this warns and continues rather than stopping the app.
-from creditsurv.environment import blocked_imports, policy_block_message  # noqa: E402
-
-# In the WSL copy, keep up with edits made on Windows even when no page is open:
-# a watcher thread (once per server process) syncs and restarts when that is safe.
-# Anywhere else it does nothing.
+# In the WSL copy, keep this dashboard's own code up to date with edits made on
+# Windows: a watcher thread (once per server process) syncs and restarts when that
+# is safe. Anywhere else it does nothing.
 from creditsurv.wsl_sync import start_watcher  # noqa: E402
 
 start_watcher(ROOT)
 
-_blocked = blocked_imports()
-if _blocked:
-    st.error(policy_block_message(_blocked), icon=":material/gpp_bad:")
-
 VIEWS = ROOT / "app" / "views"
 # Everyday use on top; retraining and research below it, where they cannot be
-# reached by accident.
+# reached by accident. The app opens on Score applicants, which is the work: before
+# a file has been uploaded this session there is nothing of this session to monitor,
+# and Overview -- a dashboard over runs already finished -- is one click away.
 st.navigation({
-    "Score applicants": [
-        st.Page(str(VIEWS / "home.py"), title="Score applicants", icon=":material/upload_file:",
-                default=True),
-    ],
-    "Advanced": [
-        st.Page(str(VIEWS / "overview.py"), title="Overview", icon=":material/monitoring:"),
-        st.Page(str(VIEWS / "run.py"), title="Run pipeline", icon=":material/play_arrow:"),
+    "Operations": [
+        st.Page(str(VIEWS / "home.py"), title="Score applicants",
+                icon=":material/upload_file:", default=True),
+        st.Page(str(VIEWS / "overview.py"), title="Overview",
+                icon=":material/monitoring:"),
+        st.Page(str(VIEWS / "pipeline.py"), title="Run pipeline",
+                icon=":material/account_tree:"),
+        st.Page(str(VIEWS / "results.py"), title="Results viewer", icon=":material/table:"),
         st.Page(str(VIEWS / "model_registry.py"), title="Model registry",
                 icon=":material/verified:"),
-        st.Page(str(VIEWS / "results.py"), title="Results viewer", icon=":material/table:"),
+    ],
+    "Research": [
+        st.Page(str(VIEWS / "retrain.py"), title="Retrain models (research)",
+                icon=":material/model_training:"),
         st.Page(str(VIEWS / "findings.py"), title="FINDINGS", icon=":material/science:"),
     ],
 }).run()

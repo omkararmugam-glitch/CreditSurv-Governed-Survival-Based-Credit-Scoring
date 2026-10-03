@@ -1137,7 +1137,15 @@ absence takes the model below usable. The worst case above leaves concordance at
 `loan_amnt`, `int_rate` and `term` satisfies it by derivation, which is what lets a
 raw-applicant file through.
 
-**This table is now the only rule, wherever it exists.** Before this, ten columns were
+**Superseded in part by 7o: this table is one of two rules, not the only one.** It
+prices the *ranking* power an absence costs, which is what it was built to measure and
+all it can measure. It cannot price the shift in the *level* of predicted risk that
+follows when a feature the model never saw missing in training goes absent, because both
+of its metrics are rankings. A second rule, on training missingness, now runs alongside
+it; section 7o has the measurement that forced it. Everything below still stands for the
+question this table does answer.
+
+**This table is the only rule about ranking cost, wherever it exists.** Before this, ten columns were
 required by a hand-picked list (`PROVISIONAL_REQUIRED`), and measurement disagrees with
 seven of them: `purpose` costs 0.0063, `dti` 0.0047, `revol_bal` 0.0033,
 `inq_last_6mths` 0.0016, `home_ownership` 0.0014, `open_acc` 0.0012 and `delinq_2yrs`
@@ -1911,3 +1919,350 @@ worth running **after** the scoring model is chosen (7i), not before, or it is p
 twice.
 
 *Not run yet.* The bar above was fixed before the comparison existed.
+
+## 7n. Real applicants the model never fitted on, and what the drift headline was measuring
+
+Every dashboard run to date scored a generated file. `synthetic_check_1k.csv` is 1,000
+rows whose `applicant_id` values are `SYN-00000000` onwards, and the run that produced
+the current screenshots
+(`outputs/runs/20261001_151140_synthetic_check_1k`, upload sha256 `1920d1b1…`) scored
+that file and no other. This section is the first result on real applicants.
+
+**What "unseen" can mean here, and what it does not.** `full_applicant_nogeo` was
+trained with `split_scheme="random"`, `oot_cutoff=None`, over all 2,257,790 rows of
+`accepted_labeled.parquet` (2007-2018). No period was held back, so there is no later
+period to score: 2016-2018 is 1,373,126 of those rows and roughly four fifths of them
+were fitted on. The rows the model has genuinely never seen are its 20% test split,
+which is reproducible exactly -- `02_train_models.py` reads the parquet with no
+filtering or reordering and hands it to `features.build.train_test_split_loans`, which
+permutes positions with `default_rng(20260921)` and takes the first `round(n * 0.2)`.
+Reproduced, it gives 1,806,232 train / 451,558 test, which is what the training run
+recorded. Restricted to 2016-2018 that leaves 274,483 rows (86,518 / 88,778 / 99,187
+by year), and 1,000 were sampled from them with seed 20261001:
+`outputs/samples/real_testsplit_2016_2018_1k.csv`, built by the script recorded in its
+`.json` sidecar.
+
+So these are **real applicants from the latest vintages that this model never fitted
+on** -- unseen in the holdout sense. They are *not* an out-of-time holdout: the model
+saw other 2016-2018 loans, so nothing here measures temporal generalisation. Section 6
+is where that question lives, and the only models with a true 2016 cutoff are the
+`holdout*` benchmarks, which the registry refuses for lending decisions.
+
+**The result.** Same model, same threshold, same explainer, same nine post-run checks;
+both files re-run after the `term_months` fix below.
+
+| | synthetic_check_1k | real test split, 2016-2018 |
+|---|---|---|
+| rows | 1,000 | 1,000 |
+| approved / rejected | 740 / 260 (74.0%) | **862 / 138 (86.2%)** |
+| mean `pd_12m` | 0.0773 | 0.0549 |
+| mean `pd_36m` | 0.2319 | **0.1776** |
+| median `pd_36m` | 0.2060 | 0.1521 |
+| post-run checks | 9 of 9 PASS | **9 of 9 PASS** |
+| `input_quality` worst feature | 0.0% unreadable | 0.2% (limit 5%) |
+| rejections with a non-disclosable top driver | 0 of 260 | **0 of 138** |
+| feature coverage | 64 of 64 | 64 of 64 |
+| Phase 1 / Phase 2 | 0.6 s / 307.9 s | 0.6 s / 159.5 s |
+| drift headline | large (36 large, 3 moderate) | large (23 large, 5 moderate) |
+| median PSI, features that respond to the file | 0.356 | **0.044** |
+| largest PSI, same features | 2.038 | **0.345** |
+
+Real applicants score lower risk than the generated file at every quantile shown, are
+approved 12 points more often, pass all nine checks, and raise no fair-lending flag.
+On the drift measurements that respond to the file at all, real data is eight times
+stabler by median PSI and nowhere near the synthetic maximum.
+
+**The headline still says `large`, and that is the instrument, not the data.**
+`drift.compare` sets the run's status to `large` if any single feature is large, and on
+the real file the 23 large features span 0.268 to 0.345 against a 0.25 threshold -- all
+of them within a whisker of the band edge. Two separate causes, one fixed here and one
+recorded below:
+
+**Fixed: `term_months` was scored as a wholly missing column.** It returned PSI
+**27.631** on every file, identical to three decimals on a generated file and a real
+one, with an empty `upload_mean` -- and 27.631 is exactly `2 * ln(1/1e-6)`, the value
+PSI returns when the upload side of the comparison is entirely missing. `SYNONYMS` maps
+`term` to `term_months`, and `batch.validate` applied that as a rename; the column then
+existed, so step 2's derivation -- the one place that parsed `"36 months"` into 36 --
+was skipped for it. Everything reading that frame saw text: the drift check scored the
+feature missing, `data_profile_numeric.csv` dropped it for being `object` dtype, and the
+input-quality gate counted it readable, because a string is not a missing value.
+Scoring was correct throughout, because `cleaning.clean` parses the column on its own
+path through `COLUMN_PARSERS`, which is why coverage read 64 of 64 while drift read the
+feature as absent. The two paths disagreed about exactly one feature.
+
+`validate` now applies the same `COLUMN_PARSERS` entry that cleaning uses, to the column
+whenever it is present rather than only when renamed -- a file whose column is already
+called `term_months` but holds text skipped the derivation the same way. After the fix
+`term_months` scores **0.0, stable** on both files, with `upload_mean` 42.312 (synthetic)
+and 42.048 (real) against a reference mean of 42.9276, and it is back in the numeric
+profile. No decision changed on either file: 740/260 and 862/138 before and after, which
+is the expected result of a defect that never reached the model.
+
+Parsing earlier moves where the coercion is counted: cleaning used to report "6 values
+in term_months were written as text ... and were read as numbers", and by the time it
+runs they are already months. `validate` counts them instead -- through the same
+`coerce_column` helper, which returns the count with the value -- and `run_batch` folds
+that into the per-block cleaning report, so `cleaning_report.csv` still carries the
+`text_coerced` row for the column. Checked end to end on a 200-row slice of the real
+file: `text_coerced,term_months,200`.
+
+Not introduced by the term-parsing work of 29 September, which is where it looks like it
+belongs. The synonym and the rename-before-derive order in `validate` both arrive in
+`fdf4668` (Part D); `bf2f5ba` centralised the parser and wired cleaning, the derivations
+and the schema matcher to it, and the rename path was the call site it did not reach.
+Pinned by `tests/test_batch.py::test_a_term_reads_as_months_for_every_reader_of_the_frame`
+over four spellings of the column, and by a companion test that an unreadable term
+arrives missing rather than readable. Four of those five cases fail with the fix removed.
+
+**Known limitation, not addressed: the reference period puts a floor under 21 features.**
+The remaining large readings are not distributional. They are the extended bureau
+features -- `num_*`, `mo_sin_*`, `tot_*`, `total_*_limit`, `avg_cur_bal`,
+`pct_tl_nvr_dlq` -- which Lending Club did not report on the older book: measured on
+the parquet, they are **100% missing for 2007-2011 and 52% missing in 2012**, and
+complete from 2013. The drift reference is the whole 2007-2018 training split, so it
+carries a 2.99% structural-missing bucket that no 2016-2018 file can have. PSI gives
+missing values their own bin and floors empty bins at `_EPS = 1e-6`, so that one bin
+contributes `(1e-6 - 0.0299) * ln(1e-6 / 0.0299)` = **0.308** on its own -- above the
+0.25 threshold before any distribution is compared. The cluster sits at 0.268-0.345
+because that is the floor plus a little real movement. Those features are flagged for
+having been introduced, not for drifting.
+
+Two further readings are frozen the same way and still large: `num_tl_30dpd` and
+`num_tl_90g_dpd_24m`, both 0.316 on 1 bin, identical on the two files. `term_months`
+is now 0.0 but also on 1 bin, because quantile edges on a two-valued feature collapse:
+PSI cannot see a change in the 36/60 mix, and the synthetic file's mean of 42.31
+against the reference 42.93 is such a change reported as zero.
+
+Two candidate fixes, neither applied -- changing drift bands changes what every past run
+means, so this waits until after submission:
+
+1. **Restrict the reference to 2013+ vintages**, so reference and upload are drawn from
+   the period where the features exist. Cheapest, and it leaves PSI alone; it narrows
+   the reference to 1,731,674 rows and means the band no longer answers "does this file
+   look like the training population" but "like its recent part".
+2. **Score the missing bin separately from the distributional one.** Report PSI over
+   present values, and the missing-share change as its own number with its own
+   threshold. More work and a wider change, but it separates "this column is absent"
+   -- which the check exists to catch -- from "this column has shifted", which is what
+   the band currently claims to mean. A two-valued feature such as `term_months` should
+   go through `category_distance` (TVD) at the same time, rather than quantile bins that
+   collapse to one.
+
+Until then, read the drift panel as: the headline band is pessimistic by construction on
+any recent-vintage file, and the per-feature table is what carries the information.
+Section 7e remains the worked example of a drift alert that is genuinely correct.
+
+## 7o. Ablation cost cannot tell you which columns are safe to drop
+
+A file whose columns were named `total_credit_lines`, `fico_low`/`fico_high` and
+`employment_length` scored with 61 of the model's 64 features and rejected **52.8%** of
+applicants. The same 1,000 rows, with those three columns recognised, reject **24.4%**.
+The gate had cleared the run: the ablation table (7d) prices all three absences at
+**0.0086 concordance in total**, well under the 0.010 that makes a feature required,
+and `run_summary.csv` said so in those words.
+
+Both numbers are right. The gate was measuring the wrong thing, and no threshold on the
+ablation table could have caught it.
+
+### What the ablation table says, and what it cannot say
+
+From `03e_ablation_full_applicant_nogeo.json` (50,000 test rows, baseline concordance
+0.6895, 12-month AUC 0.7000):
+
+| feature | concordance drop | 12m AUC drop | rank of 64 | training rows missing |
+|---|---|---|---|---|
+| `fico_midpoint` | 0.0057 | 0.0076 | 5th | 0.00% |
+| `emp_length_years` | 0.0024 | 0.0033 | 14th | 6.14% |
+| `total_acc` | 0.0005 | 0.0009 | 38th | 0.00% |
+| **sum** | **0.0086** | | | |
+
+Measured on the file itself, the same three absences move the **level** of predicted
+risk. Scored through the real `validate` and `prepare` path, one feature at a time,
+holding the other 63 intact:
+
+| dropped | mean PD(36m) | reject rate | change in mean PD | change in reject |
+|---|---|---|---|---|
+| nothing (64/64) | 0.2225 | 24.4% | | |
+| `total_acc` | 0.2383 | 27.7% | +0.0159 | +3.3 pp |
+| `emp_length_years` | 0.2591 | 32.8% | +0.0366 | +8.4 pp |
+| `fico_midpoint` | 0.2787 | 38.3% | +0.0563 | +13.9 pp |
+| all three | 0.3339 | 52.8% | +0.1114 | +28.4 pp |
+
+Every drop moves risk **upward**, and the ordering of the shifts is not the ordering of
+the ablation costs. `emp_length_years` costs a third of what `fico_midpoint` costs by
+concordance and produces three fifths of its rejection shift.
+
+Spearman correlation between the 61-feature and 64-feature PD vectors is **0.883**: the
+ranking barely moved, which is exactly what a 0.0086 concordance drop predicts. The
+ablation table was accurate about the quantity it measures. **Concordance is a ranking
+statistic, and an approval rate is a threshold on an absolute probability.** A shift
+that moves every row the same way leaves the ranking almost untouched and moves the
+decision boundary a long way. No ablation study, run at any sample size, can report a
+number that is invariant to the thing being asked about.
+
+### The mechanism: an unlearned NaN route, not an imputed value
+
+Nothing in the code imputes a value. `batch.prepare` restores a column the file lacks
+as NaN, and sets any `<name>_missing` indicator to 1; LightGBM takes NaN natively. That
+is the correct design and it is what makes the absence *look* harmless.
+
+The failure is in the booster. A LightGBM split sends NaN whichever way the training
+data taught it. `total_acc` and `fico_midpoint` were missing in **0.00%** of the
+model's 20,000 training rows, so the training data taught it nothing, and every split
+on those features falls back to its default direction -- a fixed, arbitrary choice that
+applies to every row of the file at once. It is not an imputed value, which is why no
+audit of the imputation logic would find it; it is an unaudited constant chosen by a
+tree-building default.
+
+Substituting the training median instead recovers nearly all of the gap:
+
+| `fico_midpoint`, `total_acc` | mean PD(36m) | reject rate |
+|---|---|---|
+| left NaN (what the run did) | 0.3339 | 52.8% |
+| `fico_midpoint` median-filled | 0.2906 | 39.2% |
+| both median-filled | 0.2764 | 36.1% |
+| all three median-filled | 0.2329 | 24.9% |
+| real values (64/64) | 0.2225 | 24.4% |
+
+The residual 24.9% against 24.4% is the right sign: this file's applicants are better
+than the training medians (FICO midpoint 707 against 692, `total_acc` 24 against 22), so
+filling with a median is slightly pessimistic, as a median fill should be.
+
+`emp_length_years` is the control. It was missing in **6.14%** of training rows, so its
+NaN route *is* learned, and its +8.4 points is the model correctly reading "employment
+length not stated" as a worse risk. Same code path, same kind of absence, opposite
+status: one is signal the model was fitted on, the other is a default it never saw. The
+distinction is invisible in the ablation table, which prices them 0.0024 and 0.0057.
+
+### Why the comparison that raised the alarm was not the evidence
+
+The run was flagged because 52.8% looked wrong beside 26% on a full-feature synthetic
+file and 13.8% on real holdout data. That comparison does not support the conclusion:
+`test_2_renamed_1k.csv` and `synthetic_check_1k.csv` share **no applicant ids** and
+differ in every column. They are two draws from the same generator, not one file
+renamed. Their populations are close (medians within about 1% on `loan_amnt`, `dti`,
+`fico_range_low`, `total_acc`, and the same term, purpose and home-ownership mix), which
+is why the suspicion was correct, but the number that establishes it is the same-rows
+comparison above: 52.8% against 24.4% on identical input.
+
+### Fix 1: the three columns were in the file all along
+
+All three were sitting in `validation_report.json` under `ignored`, as "not a feature of
+the trained model". Two separate causes:
+
+* `total_credit_lines` was simply absent from `SYNONYMS`, and is only "totalcreditlines"
+  against "totalacc" after normalising -- too far apart for the 0.82 similarity floor.
+* `fico_low`, `fico_high` and `employment_length` could not be mapped **at all**, under
+  any name. `fico_range_low`, `fico_range_high` and `emp_length` are in `SUPERSEDED`:
+  they are derivation inputs, not model features, so they were never in the rename
+  layer's target set. A column could reach them only by already having their exact
+  name. `SYNONYMS` even held `employmentlength`, pointed at `emp_length_years` -- a
+  numeric feature, which the content check correctly vetoed for a column holding
+  "10+ years", leaving no candidate at all.
+
+`schema_match.rename_targets` now adds the raw inputs of any blocked derivation to the
+target set, and `SYNONYMS` values may be a tuple when one name has two readings the
+content check must separate. `employment_length` is `emp_length_years` when it holds `7`
+and `emp_length` when it holds `"7 years"`; `parse_emp_length` returns NaN for a number,
+so guessing wrong silently empties the column rather than failing. After the fix, the
+run reads 64 of 64, derives `fico_midpoint` and `emp_length_years`, and rejects 24.4%
+(`20261002_143422_test_2_renamed_1k`).
+
+### A second defect, found by the first fix
+
+Making a derivation's raw inputs reachable by rename exposed a break in the
+derivation chain itself. `derive_features` runs a rule only when that rule's own
+feature is wanted, and `fico_range_high` is superseded -- not a model feature, so never
+in any spec, so never wanted. A file supplying only `fico_range_low` therefore had the
+column recognised, `fico_range_high` never computed, and `fico_midpoint` silently not
+derived: the report said the column was understood and the model was scored without the
+feature. It did not show up on the file in this section because that file had both FICO
+bounds. `derive.expand_wanted` now closes the chain by adding any derivable intermediate
+that a wanted feature needs.
+
+This also corrects a wrong message. A column called `credit_score` was previously
+reported as "recognised as fico_range_low, which this model does not use", which was
+false for every model that has `fico_midpoint` -- the score feeds it through
+`fico_range_low` -> `fico_range_high` -> `fico_midpoint`. A single `credit_score` column
+now reaches `fico_midpoint` exactly. Given 7c, that a credit score was being understood
+and then discarded is worth recording on its own.
+
+### Fix 2: a second rule in the required/optional gate
+
+Fixing three synonyms does not fix the gate, which would clear the next such file just
+as readily. A feature is now judged on **two** independent rules:
+
+1. **Ablation cost** (7d, unchanged): required at or above 0.010 concordance. Measures
+   ranking power lost.
+2. **Training missingness** (`decision.unlearned_missing_floor`, 0.01): a feature
+   missing in under 1% of the model's training rows has no learned route for being
+   absent, so its absence is an unlearned default, **whatever its ablation cost says**.
+
+The rules are deliberately not combined into one score. They answer different questions
+and neither implies the other: `fico_midpoint` is cheap by the first and dangerous by
+the second, and that combination is the whole finding. A feature required by the first
+rule keeps that status, so the new rule can only ever tighten the gate.
+
+On `full_applicant_nogeo`, rule 2 covers **24 of 64** features.
+`decision.unlearned_missing_action` chooses what happens when a file omits one:
+
+* **`fill`** (default) substitutes the value fitted on the training rows -- the median
+  for a numeric feature, the modal level for a categorical one -- sets any
+  `<name>_missing` indicator to 0, and names the feature and the substituted value in
+  the warnings, in `schema_message`, in `validation_report.json`, in new
+  `run_summary.csv` columns and in its own red box on the dashboard.
+* **`block`** refuses the file, as for a required feature.
+
+`fill` is the default because it is the honest reading of what happens. The model is
+going to use *some* constant for that column either way; a median fitted on the training
+split is one the run can name and defend, and the booster's default direction is
+neither. Verified both ways on a copy of the file with the four source columns stripped
+(`20261002_143433_test_2_stripped_1k`): `fill` scores it at 36.1% with `total_acc = 22.0`
+and `fico_midpoint = 692.0` named per feature, and `emp_length_years` correctly left
+missing; `block` refuses it, naming both features, their training missing rates and
+their ablation costs in the same message.
+
+**Reported per feature, not as a total.** The substitution is kept out of
+`optional_missing_cost`, which is where this case was already being under-reported: that
+column states a concordance figure, and a concordance figure is blind to the shift. A
+coverage percentage and a cost in concordance cannot say which applicant attribute was
+supplied rather than read, nor which way it moved the risk, so each filled feature gets
+its own line ending "do not treat this applicant's result as fully reliable".
+
+### Limits of the fix, stated
+
+* **The floor is a threshold on a sample.** The rates come from the 20,000 training rows
+  the scoring context already holds for drift, not from the full training split. A
+  feature at 0.00% on 20,000 rows is not necessarily at 0.00% on 1.8 million. 1% is a
+  judgement, not a measurement; what is measured is that 0.00% is dangerous and 6.14%
+  is not.
+* **Structural features are exempt, and one of them is borderline.** A feature in
+  `FeatureSpec.structural_missing` carries a `<name>_missing` indicator the model was
+  fitted on, so a blank is an answer it has a route for, and how often that answer
+  occurs is a distribution question the drift check already reports. `revol_util` is
+  structural at 0.06% training missingness -- below the floor, exempt by design, and
+  therefore the one case where this rule would not fire and arguably should. It is
+  exempt because its indicator is a trained input; that is an argument about the
+  indicator, not a measurement that the exemption is safe.
+* **Rule 2 cannot fire where the rate is unknown.** A feature absent from the reference
+  frame has no rate, and an unknown rate is never treated as a low one -- which means
+  silence, not safety.
+* **A filled feature can still be cited as a reason, and should not be.** Not fixed
+  here, and the larger of the two open issues. Phase 2 explains
+  `rejected_design.parquet`, which is the design matrix as scored, so a filled feature
+  carries its substituted value into SurvSHAP(t). `fico_midpoint` is disclosable and
+  has a reason template, so an applicant can be told in an adverse-action notice that
+  their credit score contributed to the refusal when no credit score was ever read from
+  the file. Under Reg B a stated principal reason has to be an actual reason. The
+  candidate fixes are to treat a filled feature as non-disclosable for reason
+  selection, or to route any rejection whose top adverse driver was filled into
+  `internal_review_flags` -- the second is closer to how `NOT_DISCLOSABLE` already
+  works, where a reason that cannot lawfully be given is recorded as a flag rather
+  than quietly dropped. Neither is applied, because which one is right is a policy
+  decision and the notice wording is not ours to change unreviewed.
+* **No rule here bounds the size of the shift.** Both rules are screens on whether an
+  absence is acceptable. Neither predicts how far the level moves, and the only numbers
+  in this section that do come from scoring the file twice. A measured level-shift
+  table, per feature, is the missing instrument; 03e does not produce one because it
+  ablates against survival metrics, and both of its metrics are rankings.

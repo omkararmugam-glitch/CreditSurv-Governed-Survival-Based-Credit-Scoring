@@ -208,33 +208,53 @@ class TestApproval:
         failing.unlink()                                  # only the passing one left
         assert registry.approve_model(cfg, "m", by="T", findings="7l").approved
 
-    def test_the_cli_and_the_page_share_one_check_and_one_approval(self):
+    def test_the_cli_and_the_api_share_one_check_and_one_approval(self):
+        """The CLI and the API call the same two functions; the page calls neither
+        -- it asks the API, so it cannot check or approve anything itself."""
         cli = (PROJECT_ROOT / "scripts" / "07_model_registry.py").read_text(encoding="utf-8")
+        api = (PROJECT_ROOT / "src" / "creditsurv" / "api" / "app.py").read_text(
+            encoding="utf-8")
         page = (VIEWS / "_registry_view.py").read_text(encoding="utf-8")
-        for src in (cli, page):
+        for src in (cli, api):
             assert "evaluate_rules(" in src and "approve_model(" in src
             assert "check_approval_rules(" not in src      # no private rule list
             assert "approval_block(" not in src            # no approval of its own
-        assert 'status = "approved"' not in page and ".save(" not in page
+        for src in (api, page):                           # never writes the registry
+            assert 'status = "approved"' not in src and "reg.save(" not in src
+            assert "Registry(" not in src and "models.yaml\", \"w" not in src
+        assert "evaluate_rules(" not in page and "approve_model(" not in page
 
 
 # ---------------------------------------------------------------- the page --
 
 def _page(cfg_path, runs_dir, marker):
+    """The page, drawn against an API over this test's registry. The job launcher
+    is replaced so a click is recorded instead of starting a real job; every rule
+    that refuses a job is still the API's."""
     def script(views, src, cfg_path, runs_dir, marker):
         import sys
         sys.path[:0] = [views, src]
         from pathlib import Path
 
-        from creditsurv.config import load_config
+        from fastapi.testclient import TestClient
+
+        import _client
         import _registry_view as view
+        from creditsurv.api.app import create_app
+        from creditsurv.config import load_config
 
         def fake_launcher(kind, tag):
             Path(marker).write_text(f"{kind} {tag}")
             return Path(runs_dir) / "never_created"
 
-        view.render(load_config(cfg_path), launcher=fake_launcher, runs_dir=runs_dir,
-                    via_wsl=False)
+        app = create_app(load_config(cfg_path), config_path=cfg_path,
+                         jobs_dir=Path(runs_dir), job_launcher=fake_launcher,
+                         watch_code=False, evidence_via_wsl=False)
+        _client.use(TestClient(app))
+        try:
+            view.render()
+        finally:
+            _client.use(None)
 
     at = AppTest.from_function(script, default_timeout=120, kwargs={
         "views": str(VIEWS), "src": str(PROJECT_ROOT / "src"),
@@ -358,8 +378,18 @@ def test_the_page_is_in_the_app():
 
 
 def test_the_real_page_renders_against_the_real_registry():
-    at = AppTest.from_file(str(VIEWS / "model_registry.py"), default_timeout=240)
-    at.run()
+    if str(VIEWS) not in sys.path:
+        sys.path.insert(0, str(VIEWS))
+    import _client
+    from fastapi.testclient import TestClient
+
+    from creditsurv.api.app import create_app
+    _client.use(TestClient(create_app(watch_code=False)))
+    try:
+        at = AppTest.from_file(str(VIEWS / "model_registry.py"), default_timeout=240)
+        at.run()
+    finally:
+        _client.use(None)
     assert not at.exception, [e.value for e in at.exception]
     models = set(at.dataframe[0].value["model"])
     assert set(yaml.safe_load((PROJECT_ROOT / "config" / "models.yaml")

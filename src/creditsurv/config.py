@@ -226,7 +226,30 @@ class DecisionConfig:
     unreadable for more than this share of rows, or missing for more than this
     share *beyond* its missing rate in training (many bureau fields are blank for
     most applicants by design). Decisions are not issued on inputs the model never
-    saw. Test 3 read term_months as unreadable for every row and passed."""
+    saw. Test 3 read term_months as unreadable for every row and passed.
+
+    It judges only features the file *supplied*. A feature absent altogether is the
+    unlearned_missing_* settings below."""
+    unlearned_missing_floor: float = 0.01
+    """A feature missing in less than this share of the model's training rows has no
+    learned route for being absent, so dropping it is an unlearned tree default and
+    not a degradation. The second half of the required/optional gate, applied
+    whatever the ablation cost says, because ablation measures ranking lost and an
+    unlearned default shifts the level instead (FINDINGS 7o)."""
+    unlearned_missing_action: str = "fill"
+    """What to do when a file omits such a feature.
+
+    ``"fill"``   substitute the value fitted on the training rows -- the median for a
+                 numeric feature, the modal level for a categorical one -- and stamp
+                 the run and every affected feature by name, so the substitution is
+                 visible rather than inferred from a coverage percentage.
+    ``"block"``  refuse the file, as for a required feature.
+
+    ``"fill"`` is the default because it is the honest reading of what happens: the
+    model is going to use *some* constant for that column either way, and a fitted
+    median is a defensible one that the run can name, where the booster's default
+    direction is neither. ``"block"`` is for a caller who would rather fix the file
+    than score a stamped run."""
 
 
 @dataclass(frozen=True)

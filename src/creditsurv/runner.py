@@ -23,6 +23,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import fileio
 from .provenance import OVERWRITE_REFUSED, PROJECT_ROOT
 
 __all__ = ["LockHeld", "launch", "execute", "read_status", "effective_state",
@@ -42,7 +43,7 @@ def _now() -> str:
 def _write_json(path: Path, obj) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(obj, indent=2), encoding="utf-8")
-    os.replace(tmp, path)          # atomic: the UI never reads a half-written file
+    fileio.replace(tmp, path)      # atomic: the UI never reads a half-written file
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -135,13 +136,20 @@ def launch(plan_stages: list[dict], *, lock_tag: str, meta: dict | None = None,
     _write_json(lock, {"run_id": run_id, "pid": os.getpid(), "started": _now(),
                        "run_dir": str(run_dir)})
     if detach:
-        flags = 0
-        if os.name == "nt":
-            flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        # "Outlive whoever started me" is said differently on the two platforms, and
+        # for a long time it was said only on Windows. In WSL -- where this app
+        # actually runs -- the job was therefore left in the server's process group,
+        # session and controlling terminal: a Ctrl+C in the window that started the
+        # app, or closing that window, sent SIGINT/SIGHUP to the whole group and took
+        # an hour-long 03d run down with the server. start_new_session is setsid():
+        # own session, no controlling terminal, nothing left to hang it up.
+        detached = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                                      | subprocess.DETACHED_PROCESS}
+                    if os.name == "nt" else {"start_new_session": True})
         with open(run_dir / "runner.out", "w", encoding="utf-8") as out:
             proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT, env=env, stdout=out,
                                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                    creationflags=flags, close_fds=True)
+                                    close_fds=True, **detached)
         # Hand the lock to the child, unless it has already finished and released it.
         if lock.exists() and read_status(run_dir).get("finished") is None:
             _write_json(lock, {"run_id": run_id, "pid": proc.pid, "started": _now(),

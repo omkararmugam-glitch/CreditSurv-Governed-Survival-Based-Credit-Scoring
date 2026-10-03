@@ -45,7 +45,7 @@ from .runner import RUNS_DIR, active_lock, launch
 __all__ = ["EvidenceJob", "JOBS", "LOCK_TAG", "SOURCE", "runs_in_wsl",
            "wsl_available", "windows_to_wsl", "job_stages", "launch_job",
            "existing_outputs", "evidence_runs", "job_running", "RUNS_DIR",
-           "parse_progress"]
+           "parse_progress", "refusal"]
 
 LOCK_TAG = "registry_evidence"
 SOURCE = "ui-registry"
@@ -147,6 +147,40 @@ def existing_outputs(kind: str, tag: str, tables_dir: Path) -> list[Path]:
         except (OSError, ValueError):
             continue
     return list(dict.fromkeys(found))
+
+
+def refusal(kind: str, tag: str, *, rule_passed: bool, tables_dir: Path,
+            runs_dir: Path = RUNS_DIR, via_wsl: bool | None = None) -> str | None:
+    """Why this job may not be started now, or None when it may.
+
+    The one set of conditions for every caller -- the registry page and the API --
+    so no route to a job skips one. In order: WSL is needed and absent; another
+    evidence job is running (one at a time, since each loads the full training
+    data); the rule already passes; or evidence for this model already exists.
+    The last is the important one: running again until a result passes would
+    defeat the bar, so replacing evidence is left to ``--overwrite`` from the
+    command line, deliberately.
+    """
+    if kind not in JOBS:
+        return f"unknown job {kind!r}; one of {', '.join(JOBS)}"
+    job = JOBS[kind]
+    via_wsl = runs_in_wsl() if via_wsl is None else via_wsl
+    if via_wsl and not wsl_available():
+        return "WSL is not installed on this machine."
+    running = job_running(runs_dir)
+    if running:
+        return (f"Another evidence job is running ({running.get('run_id')}); one at "
+                f"a time, since each loads the full training data.")
+    short = job.rule.split("_", 1)[0]
+    if rule_passed:
+        return f"{short} already passes."
+    existing = existing_outputs(kind, tag, tables_dir)
+    if existing:
+        return (f"Evidence for this model already exists ({existing[0].name}) and the "
+                f"rule reads it. No second run is offered: running again until a "
+                f"result passes would defeat the bar. Replacing evidence needs "
+                f"--overwrite, from the command line.")
+    return None
 
 
 def launch_job(kind: str, tag: str, *, runs_dir: Path = RUNS_DIR,

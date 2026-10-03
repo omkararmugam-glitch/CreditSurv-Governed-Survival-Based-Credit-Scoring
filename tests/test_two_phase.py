@@ -24,6 +24,7 @@ import pytest
 import yaml
 
 import test_batch as tb
+from creditsurv.history import processing_history
 from creditsurv import batch, phase2
 from creditsurv.batch import BatchError, score_file
 from creditsurv.explain.adverse_action import NOT_FOR_LENDING, find_internal_content
@@ -402,11 +403,10 @@ class _Pickled:
 
 
 def test_a_second_model_load_is_fast_and_the_same(tmp_path):
-    """The dashboard's cache: once per model, reused, never stale."""
-    import sys
-    sys.path.insert(0, str(PROJECT_ROOT / "app" / "views"))
-    import _common
+    """The API's model cache: once per model, shared by every request, never stale."""
+    from creditsurv.api.state import ContextCache
     from creditsurv.cleaning import fit_values
+    from creditsurv.config import load_config
 
     train = tb._training_frame(4000)
     data = tmp_path / "data"
@@ -430,20 +430,22 @@ def test_a_second_model_load_is_fast_and_the_same(tmp_path):
                   "figures_dir": (tmp_path / "f").as_posix()},
         "decision": {"model_tag": "c", "background_rows": 500}}))
 
+    cache = ContextCache(load_config(cfg_path))
     t = time.perf_counter()
-    first = _common.cached_context("c", "discrete_hazard", cfg_path)
+    first = cache.get("c", "discrete_hazard")
     cold = time.perf_counter() - t
     t = time.perf_counter()
-    second = _common.cached_context("c", "discrete_hazard", cfg_path)
+    second = cache.get("c", "discrete_hazard")
     warm = time.perf_counter() - t
     assert second is first                                   # identical, not reloaded
     assert warm < cold / 5, (cold, warm)
+    assert cache.loads == 1 and cache.hits == 1
     pd.testing.assert_frame_equal(second.background, first.background)
     # Replace the model file: the key changes and it is loaded afresh.
     time.sleep(0.05)
     (models / "02_models_c.pkl").write_bytes((models / "02_models_c.pkl").read_bytes())
-    third = _common.cached_context("c", "discrete_hazard", cfg_path)
-    assert third is not first
+    third = cache.get("c", "discrete_hazard")
+    assert third is not first and cache.loads == 2
 
 
 # ============================================ the dashboard, both phases ==
@@ -454,32 +456,53 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 VIEWS = PROJECT_ROOT / "app" / "views"
 
 
-def _draw(run_dir, config_yaml):
-    def script(views, src, run, config_yaml):
+def _api(cfg, run_dir, ctx=None, launched=None):
+    """An API over this run's folder; Phase 2 launches are recorded, not started."""
+    import creditsurv.api.app as api_app
+    from fastapi.testclient import TestClient
+    kw = {}
+    if ctx is not None:
+        kw.update(context_loader=lambda c, t, m: ctx, context_key_fn=lambda c, t, m: (t, m))
+    return TestClient(api_app.create_app(
+        cfg, runs_dir=Path(run_dir).parent, jobs_dir=Path(run_dir).parent / "_jobs",
+        phase2_launcher=lambda rd, mode, n: (launched if launched is not None
+                                             else []).append((rd, mode, n)),
+        watch_code=False, **kw))
+
+
+def _draw(run_dir, cfg, ctx, launched: list):
+    """The result view with its Phase 2 panel, drawn against an API over this run's
+    folder. The bundle may not be built while the page draws (downloads are lazy)."""
+    import sys
+    if str(VIEWS) not in sys.path:
+        sys.path.insert(0, str(VIEWS))
+    import _client
+
+    import creditsurv.api.app as api_app
+
+    def no_zip(result):
+        raise AssertionError("the page zipped the run while drawing it")
+    api_app.bundle_zip = no_zip
+    _client.use(_api(cfg, run_dir, ctx, launched))
+
+    def script(views, run_id):
         import sys
-        sys.path[:0] = [views, src]
-        from pathlib import Path
-
+        sys.path[:0] = [views]
         import _dashboard
+        from _common import meta
         from _phase2_view import render_phase2
-        from creditsurv.batch import load_result
-        from creditsurv.config import load_config
-        import streamlit as st
+        m = meta()
+        view = _dashboard.load(run_id)
+        _dashboard.render(view, m, middle=lambda: render_phase2(
+            run_id, m, summary=view.summary))
 
-        def no_zip(result):
-            raise AssertionError("the page zipped the run while drawing it")
-        _dashboard.bundle_zip = no_zip                   # downloads must be lazy
-        cfg = load_config(config_yaml)
-        result = load_result(Path(run))
-        launched = st.session_state.setdefault("launched", [])
-        _dashboard.render(result, cfg, middle=lambda: render_phase2(
-            Path(run), cfg, summary=result.summary,
-            launcher=lambda *a: launched.append(a), explain_one=lambda r: None))
-
-    at = AppTest.from_function(script, default_timeout=120, kwargs={
-        "views": str(VIEWS), "src": str(PROJECT_ROOT / "src"), "run": str(run_dir),
-        "config_yaml": str(config_yaml)})
-    at.run()
+    try:
+        at = AppTest.from_function(script, default_timeout=120, kwargs={
+            "views": str(VIEWS), "run_id": Path(run_dir).name})
+        at.run()
+    finally:
+        _client.use(None)
+        api_app.bundle_zip = batch.bundle_zip
     assert not at.exception, [e.value for e in at.exception]
     return at
 
@@ -492,22 +515,30 @@ def _yaml(tmp_path, cfg) -> Path:
 class TestDashboardPhases:
     def test_decisions_show_before_any_reason_and_phase2_starts_itself(self, tmp_path):
         cfg, ctx, res = _phase1(tmp_path)
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        launched = []
+        at = _draw(res.run_dir, cfg, ctx, launched)
         text = " ".join(m.value for m in list(at.success) + list(at.info))
         assert "Decisions ready in" in text
         assert f"Reasons pending for {res.summary['n_rejected']}" in text
         assert at.metric[0].value == f"{res.summary['n_rows']:,}"
-        assert at.session_state["launched"] and at.session_state["launched"][0][1] == "all"
+        assert launched and launched[0][1] == "all"
 
     def test_above_the_threshold_the_page_asks(self, tmp_path):
         cfg, ctx, res = _phase1(tmp_path, explain_confirm_above=2)
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
-        assert not at.session_state["launched"]                 # nothing started
+        launched = []
+        at = _draw(res.run_dir, cfg, ctx, launched)
+        assert not launched                                     # nothing started
         radio = at.radio[0]
         assert radio.options == ["Explain all", "Explain a random sample", "Skip"]
-        radio.set_value("Skip")
-        next(b for b in at.button if b.label == "Start Phase 2").click().run()
-        assert at.session_state["launched"][0][1] == "skip"
+        # The choice goes to the API, which starts Phase 2 in the chosen mode.
+        import _client
+        _client.use(_api(cfg, res.run_dir, ctx, launched))
+        try:
+            radio.set_value("Skip")
+            next(b for b in at.button if b.label == "Start Phase 2").click().run()
+        finally:
+            _client.use(None)
+        assert launched[0][1] == "skip"
 
     def test_progress_shows_while_phase2_runs(self, tmp_path):
         cfg, ctx, res = _phase1(tmp_path)
@@ -517,7 +548,7 @@ class TestDashboardPhases:
         st.update(state="running", pid=os.getpid(), done=3, target=9,
                   rate_per_min=12.5, eta_seconds=29)
         status.write_text(json.dumps(st))
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        at = _draw(res.run_dir, cfg, ctx, [])
         assert any("3 of 9" in (getattr(p, "text", "") or "") for p in at.get("progress")) \
             or any("3 of 9" in str(p.proto) for p in at.get("progress"))
         assert any("12.5 per minute" in m.value for m in at.markdown)
@@ -525,7 +556,7 @@ class TestDashboardPhases:
     def test_a_finished_run_draws_everything(self, tmp_path):
         cfg, ctx, res = _phase1(tmp_path)
         explain_run(res.run_dir, cfg, model=ctx.model, model_path=ctx.model_path)
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        at = _draw(res.run_dir, cfg, ctx, [])
         assert any("Phase 2 finished" in s.value for s in at.success)
 
     def test_downloads_taken_mid_phase2_say_they_are_partial(self, tmp_path):
@@ -542,7 +573,7 @@ class TestDashboardPhases:
         status.write_text(json.dumps(st))
 
         # While Phase 2 runs, nothing can be downloaded: every button is disabled.
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        at = _draw(res.run_dir, cfg, ctx, [])
         banner = " ".join(w.value for w in at.warning)
         assert f"Phase 2 running: 1 of {n} explained, ~4 min remaining" in banner
         assert "Downloads are disabled until it finishes" in banner
@@ -553,7 +584,7 @@ class TestDashboardPhases:
         # downloadable again, and say what they are.
         st.update(state="stopped")
         status.write_text(json.dumps(st))
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        at = _draw(res.run_dir, cfg, ctx, [])
         assert "partial snapshot" in " ".join(w.value for w in at.warning)
         buttons = at.get("download_button")
         assert not any(b.proto.disabled for b in buttons)
@@ -571,7 +602,7 @@ class TestDashboardPhases:
         # Phase 2 finishes: the banner goes, the buttons and the zip are the full run.
         explain_run(res.run_dir, cfg, model=ctx.model, model_path=ctx.model_path)
         assert not phase2.snapshot(res.run_dir)["partial"]
-        at = _draw(res.run_dir, _yaml(tmp_path, cfg))
+        at = _draw(res.run_dir, cfg, ctx, [])
         assert not any("partial snapshot" in w.value for w in at.warning)
         labels = [b.label for b in at.get("download_button")]
         assert "⬇ Download all (ZIP)" in labels
@@ -675,11 +706,17 @@ def test_run_batch_is_only_the_two_phases():
     assert not called & (SCORE | EXPLAIN)
 
 
-@pytest.mark.parametrize("path", ["app/views/home.py", "scripts/06_score_upload.py"])
-def test_every_scoring_caller_goes_through_both_functions(path):
-    names = {name for name, _ in _calls(ast.parse(
-        (PROJECT_ROOT / path).read_text(encoding="utf-8")))}
-    assert {"score_file", "explain_run"} <= names, path
+@pytest.mark.parametrize("paths", [("src/creditsurv/api/state.py",
+                                    "src/creditsurv/api/app.py"),
+                                   ("scripts/06_score_upload.py",)])
+def test_every_scoring_caller_goes_through_both_functions(paths):
+    """The two ways in -- the API (the dashboard's) and the command line -- both
+    score with score_file and explain with explain_run."""
+    names = set()
+    for path in paths:
+        names |= {name for name, _ in _calls(ast.parse(
+            (PROJECT_ROOT / path).read_text(encoding="utf-8")))}
+    assert {"score_file", "explain_run"} <= names, paths
 
 
 def test_background_phase2_runs_the_same_function():
@@ -688,8 +725,10 @@ def test_background_phase2_runs_the_same_function():
     import inspect
     src = inspect.getsource(phase2.launch_background)
     assert '"scripts/06_score_upload.py", "--explain"' in src
+    api = (PROJECT_ROOT / "src/creditsurv/api/app.py").read_text(encoding="utf-8")
+    assert "phase2.launch_background" in api
     view = (VIEWS / "_phase2_view.py").read_text(encoding="utf-8")
-    assert "phase2.launch_background" in view
+    assert "/phase2" in view                                   # asks the API
     assert "explain_run(" not in view                          # the page never explains
 
 
@@ -702,6 +741,8 @@ def test_nothing_branches_on_a_file_name_or_fixture():
     for rel in ("src/creditsurv/batch.py", "src/creditsurv/phase2.py",
                 "src/creditsurv/explain/parallel.py", "app/views/home.py",
                 "app/views/_phase2_view.py", "app/views/_dashboard.py",
+                "src/creditsurv/api/app.py", "src/creditsurv/api/state.py",
+                "src/creditsurv/history.py", "src/creditsurv/stages.py",
                 "scripts/06_score_upload.py"):
         text = (PROJECT_ROOT / rel).read_text(encoding="utf-8").lower()
         for word in suspicious:
@@ -765,3 +806,97 @@ class TestWslSync:
         common = (VIEWS / "_common.py").read_text(encoding="utf-8")
         header = common.split("def page_header")[1].split("\ndef ")[0]
         assert "code_freshness()" in header
+
+
+# ---------------------------------------------- the processing history (7p) --
+
+def _rec(run_id, created, *, rows=100, approved=80, model="m", lending=True,
+         state="finished", explained=0, flag=None):
+    from creditsurv.history import RunRecord
+    return RunRecord(run_id, Path(run_id), state, {
+        "created_at": created, "n_rows": rows, "n_approved": approved,
+        "n_rejected": rows - approved, "approval_rate": approved / rows,
+        "model_tag": model, "source_file": run_id.split("_", 2)[-1] + ".csv",
+        "for_lending_decisions": lending, "n_explained": explained,
+        "fair_lending_flag_share": flag})
+
+
+class TestProcessingHistory:
+    """The history section's figures: sums over run_summary.csv, nothing else."""
+
+    def runs(self):
+        return [_rec("20260901_120000_a", "2026-09-01T12:00:00", rows=100, approved=90),
+                _rec("20260915_120000_b", "2026-09-15T12:00:00", rows=200, approved=150,
+                     model="other"),
+                _rec("20260915_130000_c", "2026-09-15T13:00:00", rows=300, approved=210),
+                _rec("20260916_120000_d", "2026-09-16T12:00:00", rows=400, approved=0,
+                     state="failed checks"),
+                _rec("20260916_130000_e", "2026-09-16T13:00:00", rows=500, approved=250,
+                     lending=False)]
+
+    def test_it_sums_finished_runs_across_dates_and_files(self):
+        h = processing_history(self.runs(), today="2026-09-16")
+        # a + b + c; d failed its checks and e is not for lending decisions
+        assert h["applicants_processed"] == 600
+        assert h["total_approved"] == 450
+        assert h["total_rejected"] == 150
+        assert h["approval_rate_overall"] == 450 / 600
+        assert h["total_runs"] == 5 and h["finished_runs"] == 3
+        assert h["files_processed"] == 3
+        assert [r["day"] for r in h["series"]] == ["2026-09-01", "2026-09-15",
+                                                   "2026-09-15"]
+        assert h["first_day"] == "2026-09-01" and h["last_day"] == "2026-09-16"
+
+    def test_a_failed_run_counts_as_a_run_and_not_as_volume(self):
+        h = processing_history(self.runs(), today="2026-09-16")
+        assert "20260916_120000_d" not in {r["run_id"] for r in h["series"]}
+        assert h["total_runs"] > h["finished_runs"]
+
+    def test_the_lending_filter_changes_what_is_counted(self):
+        h = processing_history(self.runs(), for_lending_only=False,
+                               today="2026-09-16")
+        assert h["applicants_processed"] == 1100          # e joins
+        assert h["finished_runs"] == 4
+
+    def test_dates_and_model_narrow_it(self):
+        h = processing_history(self.runs(), date_from="2026-09-15",
+                               date_to="2026-09-15", today="2026-09-16")
+        assert h["applicants_processed"] == 500
+        assert h["total_runs"] == 2
+        one = processing_history(self.runs(), model_tag="other", today="2026-09-16")
+        assert one["applicants_processed"] == 200
+        assert one["model_tags"] == ["m", "other"]        # the offered list is unfiltered
+
+    def test_the_week_and_month_windows_trail_the_date(self):
+        runs = self.runs()
+        week = processing_history(runs, today="2026-09-16")
+        assert week["applicants_last_7_days"] == 500      # b and c, not a
+        assert week["applicants_last_30_days"] == 600     # a as well
+        later = processing_history(runs, today="2026-11-01")
+        assert later["applicants_last_7_days"] == 0
+        assert later["applicants_processed"] == 600       # totals do not age
+
+    def test_it_reports_how_much_of_the_volume_is_still_unexplained(self):
+        """Counted volume is decisions, not notices: four of FINISHED_STATES have
+        final decisions and unwritten reasons, so the gap is reported, not implied."""
+        runs = [_rec("20260901_120000_a", "2026-09-01T12:00:00", rows=100, approved=60,
+                     state="finished", explained=40),
+                _rec("20260902_120000_b", "2026-09-02T12:00:00", rows=100, approved=60,
+                     state="reasons pending", explained=0)]
+        runs[0].summary["n_reasons_pending"] = 0
+        runs[1].summary["n_reasons_pending"] = 40
+        h = processing_history(runs, today="2026-09-02")
+        assert h["applicants_processed"] == 200        # both runs decided
+        assert h["total_rejected"] == 80
+        assert h["rejected_explained"] == 40
+        assert h["reasons_pending"] == 40
+        assert h["runs_awaiting_reasons"] == 1
+        assert h["applicants_awaiting_reasons"] == 100
+
+    def test_a_run_with_no_reasons_has_no_flag_share(self):
+        """None, not zero: nothing measured must not plot as 'measured, and clean'."""
+        runs = [_rec("20260901_120000_a", "2026-09-01T12:00:00", explained=0, flag=0.0),
+                _rec("20260902_120000_b", "2026-09-02T12:00:00", explained=10, flag=0.2)]
+        series = processing_history(runs, today="2026-09-02")["series"]
+        assert series[0]["fair_lending_flag_share"] is None
+        assert series[1]["fair_lending_flag_share"] == 0.2

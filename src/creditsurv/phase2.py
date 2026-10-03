@@ -49,6 +49,7 @@ from .batch import (CAP_NOTE, INTERNAL_COLUMNS, INTERNAL_DIR, INTERNAL_FLAGS,
                     INTERNAL_README, INTERNAL_RECORDS, MAX_PRINCIPAL_REASONS,
                     PARALLEL_MIN_ROWS, PHASE2_DIR, PREVIEW_ROWS, Aggregates,
                     BatchError, BatchResult, _load_frame, _slug, _without_features)
+from . import fileio
 from .config import load_config
 from .environment import policy_block_message, policy_blocked_exception
 from .explain.adverse_action import (NOT_FOR_LENDING, build_adverse_action_notice,
@@ -85,7 +86,7 @@ def _read_json(path: Path, default=None):
 def _write_json(path: Path, obj) -> None:
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(obj, indent=2, default=str), encoding="utf-8")
-    os.replace(tmp, path)                  # readers never see a half-written file
+    fileio.replace(tmp, path)              # readers never see a half-written file
 
 
 def _pid_alive(pid) -> bool:
@@ -660,7 +661,7 @@ def _rewrite(path: Path, fill, chunk_rows: int = 50_000) -> None:
         first = False
     if first:                                        # empty file: keep it as it is
         return
-    os.replace(tmp, path)
+    fileio.replace(tmp, path)
 
 
 COPY_BACK_EVERY = 60.0
@@ -733,7 +734,7 @@ def materialize(run_dir: Path, *, final: bool = False,
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
                 for r in sorted(issued):
                     zf.writestr(issued[r]["notice_file"], issued[r]["text"])
-            os.replace(tmp, zpath if not problems else
+            fileio.replace(tmp, zpath if not problems else
                        run_dir / "adverse_action_notices.WITHHELD.zip")
             if problems:
                 zpath.unlink(missing_ok=True)
